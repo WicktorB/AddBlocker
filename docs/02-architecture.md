@@ -1,5 +1,7 @@
 # Architecture proposée — AddBlocker
 
+> **Mise à jour (phase 0 terminée)** — La cible est un **usage personnel en extension non empaquetée**, pas le Chrome Web Store. La séparation stricte code/données décrite au §5 n'est donc plus une contrainte de conformité : elle reste une bonne pratique, mais les scriptlets peuvent être rechargés localement sans republication. Le §6 (compteur approximatif) ne s'applique plus non plus : `onRuleMatchedDebug` est disponible en non empaqueté, donc le compteur peut être exact. Les mesures de phase 0 sont dans l'[ADR 0001](adr/0001-moteur-de-conversion.md).
+
 ## Principe directeur
 
 > **Le moteur de filtrage tourne au build, pas au runtime.**
@@ -116,6 +118,10 @@ C'est ici que le projet se gagne ou se perd. ~100 000 filtres réseau doivent te
 6. **Découpe en rulesets thématiques** (≤ 100 déclarés, ≤ 50 actifs) : `ads`, `privacy`, `annoyances`, `regional-fr`, `regional-de`… L'utilisateur active/désactive via `updateEnabledRulesets()`, ce qui libère du quota pour ceux qui n'en veulent pas.
 
 **Garde‑fou CI obligatoire** : le build échoue si le total dépasse le budget, avec un rapport par ruleset. Sans ça, on découvre le problème à la publication.
+
+**Validation RE2 obligatoire** : une seule regex avec lookahead fait rejeter *tout le ruleset* par Chrome, en silence. Mesuré en phase 0 : une règle des listes uBO désactivait les 3 436 autres. Le compilateur doit écarter les regex non-RE2 avant émission, et la CI doit charger les rulesets dans un vrai Chrome — une validation par schéma JSON ne voit rien.
+
+**Chiffres mesurés** (phase 0, corpus 77 265 filtres réseau) : 12 760 règles produites, compression 5,75× (20,98× sur EasyList seul), 42,5 % du quota garanti, 5,0 % de filtres non convertis. Chrome accepte jusqu'à 50 000 domaines dans une seule règle sans dégradation mesurable.
 
 ### 3.4 Traçabilité
 

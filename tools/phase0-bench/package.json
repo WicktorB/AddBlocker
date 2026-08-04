@@ -1,0 +1,20 @@
+{
+  "name": "@addblocker/phase0-bench",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "tsx src/run.ts",
+    "sanity": "tsx src/sanity.ts",
+    "validate": "tsx src/validate-chrome.ts",
+    "calibrate": "tsx src/calibrate-domains.ts",
+    "find-bad-rules": "tsx src/find-bad-rules.ts"
+  },
+  "devDependencies": {
+    "@adguard/tsurlfilter": "5.0.1",
+    "@types/node": "^22.10.0",
+    "playwright-core": "^1.62.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -2,26 +2,34 @@
 
 Chaque phase se termine par un critère **mesurable**. Pas de passage à la phase suivante sans le critère atteint.
 
-## Phase 0 — Décision technique (1 semaine)
+## Phase 0 — Décision technique ✅ terminée
 
-Avant d'écrire le compilateur, trancher : **repartir de zéro ou s'appuyer sur `@adguard/tsurlfilter`** ?
+Trancher : **repartir de zéro ou s'appuyer sur `@adguard/tsurlfilter`** ?
 
-Banc d'essai : compiler EasyList + EasyPrivacy avec les deux approches, comparer nombre de règles produites, taux de filtres non convertis, fidélité du modèle de priorité.
+> **Critère de sortie atteint** : [ADR 0001](adr/0001-moteur-de-conversion.md) — compilateur maison, `tsurlfilter` conservé comme oracle de test.
 
-> **Critère de sortie** : un ADR (`docs/adr/0001-moteur-de-conversion.md`) tranché, chiffres à l'appui.
+Résultats mesurés sur 77 265 filtres réseau (EasyList + EasyPrivacy + uAssets) :
 
-Cette décision conditionne 80 % de l'effort restant. Elle mérite une semaine.
+| | Maison | AdGuard |
+|---|---|---|
+| Règles DNR | **12 760** (42,5 % du quota garanti) | 73 224 (244 %) |
+| Compression | **5,75×** | 1,0× |
+| Filtres non convertis | 5,0 % | 4,6 % |
 
-## Phase 1 — Blocage réseau (3–4 semaines)
+Validé dans Chromium 141 réel : rulesets acceptés, blocage effectif confirmé, et Chrome avale jusqu'à 50 000 domaines dans une seule règle sans dégradation.
 
-- `filter-parser` : syntaxe ABP/uBO → AST (options réseau, `$badfilter`, exceptions).
-- `dnr-compiler` : traduction + optimiseur (fusion par `requestDomains`, dédup, bandes de priorité).
-- `tools/build-rulesets` : pipeline CI de génération des rulesets.
-- Extension minimale : manifest + rulesets, aucune UI.
+Enseignement le plus coûteux évité : une regex avec lookahead fait rejeter **tout un ruleset** en silence. D'où deux exigences reprises dans les phases suivantes — validation RE2 avant émission, et chargement réel dans Chrome en CI.
 
-> **Critère de sortie** : EasyList + EasyPrivacy compilés **sous 30 000 règles**, extension chargée dans Chrome, blocage vérifié sur 20 sites de référence.
+## Phase 1 — Blocage réseau (2–3 semaines)
 
-C'est le jalon qui prouve la viabilité du projet. S'il n'est pas atteint, l'optimiseur est à revoir avant toute autre chose.
+Le prototype de phase 0 a déjà prouvé la viabilité et sert de base. Il reste à le durcir :
+
+- Promouvoir `tools/phase0-bench/src/{parser,compiler}.ts` en `packages/filter-parser` et `packages/dnr-compiler`.
+- Compléter la couverture des options rares ; expanser les jokers TLD (`example.*`) pour récupérer une partie des 5 % de filtres perdus.
+- Découpe en rulesets thématiques activables (`ads`, `privacy`, `annoyances`, régionales).
+- Oracle différentiel en CI contre `tsurlfilter` : toute divergence de décision est un bug à instruire.
+
+> **Critère de sortie** : taux de filtres non convertis **sous 3 %**, zéro divergence non expliquée face à l'oracle, chargement dans Chrome vert en CI.
 
 ## Phase 2 — Filtrage cosmétique (3–4 semaines)
 
@@ -44,29 +52,33 @@ Popup (bascule par site, modes, compteur), page d'options (listes, filtres utili
 
 > **Critère de sortie** : un utilisateur peut débloquer un site cassé et créer un filtre sans quitter le navigateur.
 
-## Phase 5 — Mise à jour à chaud (2 semaines)
+## Phase 5 — Rafraîchissement des listes (1 semaine)
 
-Diff de règles signé sur CDN, application en règles dynamiques, validation par schéma en liste blanche, kill switch pour règle défectueuse.
+En usage personnel, pas de CDN à opérer ni de revue à subir : un script de rebuild local suffit.
 
-> **Critère de sortie** : une règle cassant un site est neutralisée en production **sans publication au store**, en moins de 2 h.
+- Rebuild déclenché à la main ou par tâche planifiée : re-télécharge les listes, recompile, recharge l'extension.
+- Kill switch en règles dynamiques pour neutraliser une règle qui casse un site, sans rebuild complet.
 
-## Phase 6 — Mesure de parité et publication (3 semaines)
+> **Critère de sortie** : `pnpm update-filters` régénère et recharge en moins d'une minute.
+
+## Phase 6 — Mesure de parité (2 semaines)
 
 - `tools/bench` : corpus 200–500 sites, comparaison automatisée contre uBO MV2 (Firefox) comme référence.
 - Intégration CI : détection de régression du taux de blocage à chaque changement du compilateur.
-- Soumission Chrome Web Store.
 
 > **Critère de sortie** : **≥ 95 % du taux de blocage d'uBO** sur le corpus, **≤ 1 %** de sites cassés.
 
 ---
 
-## Ce qu'il faut décider avant de commencer
+## Décisions actées
 
-Quatre questions dont les réponses changent l'architecture :
+**Distribution : usage personnel, extension non empaquetée, pas de Chrome Web Store.** Ce choix relâche trois contraintes majeures de l'architecture initiale :
 
-1. **Listes visées** : EasyList seul (léger, sûr) ou pack uBO complet + régionales (couverture maximale, pression sur le quota) ?
-2. **Permissions à l'installation** : `<all_urls>` d'emblée (fonctionne partout, effraie et fait désinstaller) ou permissions à la demande par site (installation plus douce, friction à l'usage) ?
-3. **Infrastructure de mise à jour** : un CDN à opérer, ou on s'en passe et on republie chaque semaine ? La phase 5 disparaît si la réponse est « on s'en passe ».
-4. **Cible de distribution** : Chrome Web Store public (revue, conformité stricte) ou usage personnel en non empaqueté (aucune contrainte, `onRuleMatchedDebug` disponible, compteur exact possible) ?
+| Contrainte | En contexte store | En usage personnel |
+|---|---|---|
+| Code distant interdit | Structurante — scriptlets figés dans le paquet | **Levée** : les scriptlets peuvent être rechargés localement |
+| Latence de mise à jour | Revue de quelques heures à quelques jours | **Nulle** : rebuild local immédiat |
+| Compteur de blocages | Approximatif (`getMatchedRules`, 20 appels / 10 min) | **Exact** : `onRuleMatchedDebug` est disponible en non empaqueté |
+| Permissions à l'installation | `<all_urls>` fait fuir les utilisateurs | Sans objet — un seul utilisateur, consentant |
 
-La réponse à la question 4 change particulièrement la donne : en usage personnel non empaqueté, la contrainte « pas de code distant » disparaît et le compteur exact redevient accessible.
+Reste ouvert, sans impact sur l'architecture : le périmètre exact des listes régionales à embarquer. Le quota n'étant pas contraignant (42,5 % du minimum garanti), on peut être généreux.
