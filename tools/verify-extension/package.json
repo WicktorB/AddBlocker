@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "verify": "tsx src/verify.ts" },
+  "scripts": {
+    "verify": "tsx src/verify.ts",
+    "cosmetic-check": "tsx src/cosmetic-check.ts"
+  },
   "devDependencies": {
     "tsx": "^4.19.2",
     "@types/node": "^22.10.0",

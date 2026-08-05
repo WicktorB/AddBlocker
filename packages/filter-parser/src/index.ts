@@ -7,3 +7,5 @@ export type {
     ParseStats,
     ResourceType,
 } from './types.js';
+export { parseCosmeticFilter, parseCosmeticList } from './cosmetic.js';
+export type { CosmeticFilter, CosmeticKind } from './cosmetic.js';

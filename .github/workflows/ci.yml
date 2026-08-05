@@ -40,6 +40,11 @@ jobs:
       - name: Verify in Chromium
         run: pnpm verify
 
+      # Cosmetic filtering: selectors must hide their targets, and nothing may
+      # flash before being hidden.
+      - name: Verify cosmetic filtering
+        run: pnpm cosmetic-check
+
       # Compares our decisions against tsurlfilter's. Fails on over-blocking
       # or on any divergence we cannot explain.
       - name: Differential oracle

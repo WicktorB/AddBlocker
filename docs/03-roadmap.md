@@ -68,13 +68,39 @@ Le cas `$popup` mérite une note : DNR n'a pas de type de ressource « popup ».
 
 Le build a attrapé des adresses IPv6 littérales (`[::1]`) dans des listes de domaines, que DNR n'accepte pas. Plutôt que de retirer l'entrée fautive — ce qui, sur une *exclusion*, élargirait le blocage et casserait des sites — le filtre entier est écarté. Principe retenu : **ne jamais sur-bloquer en silence**.
 
-## Phase 2 — Filtrage cosmétique (3–4 semaines)
+## Phase 2 — Filtrage cosmétique ✅ terminée
 
-- `cosmetic-compiler` : index domaine → sélecteurs, génération des content scripts par bucket.
-- `cosmetic-runtime` : sélecteurs procéduraux (`:has-text`, `:matches-css`, `:upward`, `:watch-attr`) + MutationObserver.
-- Injection CSS des sélecteurs génériques, conditionnée à la présence réelle des classes/ids.
+> **Critères de sortie atteints** :
+> - masquage vérifié dans Chromium sur des cas tirés des listes réelles (simples **et** procéduraux)
+> - **aucun flash** : l'élément n'est jamais visible, vérifié dès le premier paint et non « caché peu après »
+> - aucun sur-masquage : un élément témoin reste visible sur chaque page de test
 
-> **Critère de sortie** : zéro espace vide résiduel sur les 20 sites de référence, aucun flash de contenu (mesuré au CLS).
+### Ce qui a été livré
+
+| Composant | Rôle |
+|---|---|
+| `filter-parser` (`cosmetic.ts`) | Syntaxe `domains##selector`, `#@#`, `#$#`, `:style()` |
+| `packages/cosmetic-compiler` | Index domaine → sélecteurs, buckets, génération des scripts |
+| `packages/cosmetic-runtime` | Injection CSS + moteur procédural + MutationObserver |
+| `tools/verify-extension` (`cosmetic-check`) | Masquage et absence de flash dans un vrai Chromium |
+
+**22 113 domaines** en 56 buckets, **56 100 sélecteurs spécifiques**, 13 755 génériques, 3 640 procéduraux, 445 exceptions. 119 tests unitaires.
+
+### La découverte qui a changé l'architecture
+
+L'approche prévue — un `match pattern` par domaine dans le manifest — **ne passe pas à l'échelle**. Mesuré : 8 000 patterns coûtent **71 s de démarrage de Chrome**, 12 000 empêchent le chargement, et le coût est quadratique. Le budget réel du manifest est de ~1 000 patterns.
+
+`chrome.scripting.registerContentScripts()` accepte 25 000 patterns en 1,9 s, une seule fois. Décision et mesures dans l'[ADR 0002](adr/0002-enregistrement-des-content-scripts.md).
+
+### Choix notables
+
+- **`:has()` reste en CSS.** Natif dans Chrome depuis la 105, c'est la pseudo-classe « procédurale » la plus fréquente (728 occurrences). La laisser au moteur CSS évite l'essentiel du travail JS ; seuls `:has-text()` (241) et la longue traîne passent par le moteur procédural.
+- **Un `*` en position de domaine est un générique**, pas un domaine littéral. Traité littéralement il produit le pattern `*://*.*/*`, que Chrome refuse — en refusant l'extension entière.
+- **Coût du générique mesuré** : 234 kB injectés sur chaque page, 36 ms jusqu'à `DOMContentLoaded`. Acceptable, mais c'est le premier candidat à l'optimisation (n'injecter que les sélecteurs dont la classe/l'id existe réellement).
+
+### Limite assumée
+
+Le critère initial parlait de « 20 sites de référence ». Le proxy de l'environnement de développement bloque la quasi-totalité du web : les tests s'appuient donc sur des pages locales reproduisant les sélecteurs **réellement présents dans les listes**, servies sous les domaines concernés. Cela valide le mécanisme, pas le rendu sur les vrais sites. La mesure sur sites réels reste la phase 6.
 
 ## Phase 3 — Scriptlets (2–3 semaines)
 

@@ -129,6 +129,8 @@ Le compilateur émet une **table de correspondance `règle DNR ↔ filtre source
 
 ## 4. Moteur cosmétique
 
+> **Révisé par l'[ADR 0002](adr/0002-enregistrement-des-content-scripts.md)** — la génération de content scripts reste la bonne approche, mais ils ne peuvent pas être **déclarés dans le manifest** : mesuré, 8 000 `match patterns` coûtent 71 s de démarrage de Chrome et 12 000 empêchent le chargement. Nos 22 113 domaines passent par `chrome.scripting.registerContentScripts()`.
+
 ### 4.1 Le problème de latence
 
 Un content script qui demande ses sélecteurs au service worker attend son réveil à froid (50–200 ms) → la pub s'affiche puis disparaît (flash). Inacceptable.

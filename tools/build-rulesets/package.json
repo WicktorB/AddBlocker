@@ -3,10 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "build": "tsx src/build.ts" },
-  "dependencies": {
-    "@addblocker/filter-parser": "workspace:*",
-    "@addblocker/dnr-compiler": "workspace:*"
+  "scripts": {
+    "build": "tsx src/build.ts"
   },
-  "devDependencies": { "tsx": "^4.19.2", "@types/node": "^22.10.0" }
+  "dependencies": {
+    "@addblocker/dnr-compiler": "workspace:*",
+    "@addblocker/filter-parser": "workspace:*",
+    "@addblocker/cosmetic-compiler": "workspace:*",
+    "@addblocker/cosmetic-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2"
+  }
 }

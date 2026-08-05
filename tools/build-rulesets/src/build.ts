@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +15,7 @@ import { parseList } from '@addblocker/filter-parser';
 import { compile, validateRuleset } from '@addblocker/dnr-compiler';
 
 import { QUOTAS, RULESETS, type Ruleset } from './catalog.js';
+import { buildCosmetic, type ContentScriptEntry } from './cosmetic.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const CACHE_DIR = join(ROOT, '.filter-cache');
@@ -59,6 +60,9 @@ interface BuiltRuleset {
     compression: number;
 }
 
+/** Raw list text, kept so the cosmetic build reuses the same downloads. */
+const rawLists: string[] = [];
+
 async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     const contents: string[] = [];
     for (const source of ruleset.sources) {
@@ -75,6 +79,7 @@ async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
         return null;
     }
 
+    rawLists.push(...contents);
     const { filters, stats: parseStats } = parseList(contents.join('\n'));
     const { rules, stats, sourceMap } = compile(filters);
 
@@ -115,7 +120,7 @@ async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     };
 }
 
-function writeManifest(built: BuiltRuleset[]): Promise<void> {
+function writeManifest(built: BuiltRuleset[], contentScripts: ContentScriptEntry[]): Promise<void> {
     const manifest = {
         manifest_version: 3,
         name: 'AddBlocker',
@@ -137,6 +142,7 @@ function writeManifest(built: BuiltRuleset[]): Promise<void> {
                 path: `rules/${ruleset.id}.json`,
             })),
         },
+        content_scripts: contentScripts,
     };
 
     return writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
@@ -158,9 +164,21 @@ async function main(): Promise<void> {
             `${result.ruleset.enabledByDefault ? 'on' : 'off'} by default`);
     }
 
-    await writeManifest(built);
-    await writeFile(join(OUT_DIR, 'sw.js'),
-        'self.addEventListener("install", () => self.skipWaiting());\n', 'utf8');
+    console.log('\nBuilding cosmetic filtering');
+    const cosmetic = await buildCosmetic(rawLists, OUT_DIR);
+    console.log(`  ${cosmetic.stats.domains} domains in ${cosmetic.stats.buckets} buckets, ` +
+        `${cosmetic.stats.specificPairs} site-specific selectors`);
+    console.log(`  ${cosmetic.stats.genericSelectors} generic, ` +
+        `${cosmetic.stats.proceduralSelectors} procedural, ${cosmetic.stats.exceptions} exceptions`);
+    console.log(`  skipped: ${cosmetic.stats.skipped} (generic selectors carrying domain exclusions)`);
+    console.log(`  payload: runtime ${(cosmetic.stats.runtimeBytes / 1024).toFixed(0)}kB, ` +
+        `generic ${(cosmetic.stats.genericBytes / 1024).toFixed(0)}kB, ` +
+        `buckets ${(cosmetic.stats.bucketBytes / 1024).toFixed(0)}kB total`);
+    console.log(`  patterns: ${cosmetic.stats.manifestPatterns} in the manifest, ` +
+        `${cosmetic.stats.dynamicPatterns} registered dynamically (adr/0002)`);
+
+    await writeManifest(built, cosmetic.contentScripts);
+    await cp(join(dirname(fileURLToPath(import.meta.url)), 'sw.js'), join(OUT_DIR, 'sw.js'));
 
     const enabled = built.filter((b) => b.ruleset.enabledByDefault);
     const enabledRules = enabled.reduce((n, b) => n + b.ruleCount, 0);
@@ -168,7 +186,7 @@ async function main(): Promise<void> {
     const networkFilters = built.reduce((n, b) => n + b.networkFilters, 0);
     const unconvertible = built.reduce((n, b) => n + b.unconvertible, 0);
     const cosmeticScoped = built.reduce((n, b) => n + b.cosmeticScoped, 0);
-    const cosmetic = built.reduce((n, b) => n + b.cosmeticFilters, 0);
+    const cosmeticFilters = built.reduce((n, b) => n + b.cosmeticFilters, 0);
     const scriptlets = built.reduce((n, b) => n + b.scriptletFilters, 0);
     const regex = built.reduce((n, b) => n + b.regexCount, 0);
 
@@ -181,7 +199,7 @@ async function main(): Promise<void> {
     console.log(`  cosmetic-scoped:        ${cosmeticScoped} (handled by the cosmetic engine)`);
     console.log(`  regex used:             ${regex} / ${QUOTAS.maxRegexRules}`);
     console.log(`  rulesets:               ${built.length} / ${QUOTAS.maxStaticRulesets}`);
-    console.log(`  cosmetic filters:       ${cosmetic} (phase 2)`);
+    console.log(`  cosmetic filters:       ${cosmeticFilters}`);
     console.log(`  scriptlet filters:      ${scriptlets} (phase 3)`);
 
     console.log('\nQuota');
