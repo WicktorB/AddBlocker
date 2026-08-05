@@ -19,18 +19,44 @@ const BUILT = join(ROOT, 'dist', 'extension');
 const STAGED = join(ROOT, 'dist', 'verify-extension');
 
 /**
- * Where to find Chromium.
+ * Where to find a Chromium that can load extensions.
  *
- * This dev container ships one at a fixed path; CI installs its own through
- * Playwright. Returning undefined lets Playwright resolve the browser it
- * manages, which is the right answer everywhere else.
+ * This must always resolve to the *full* Chromium binary. Leaving it undefined
+ * is not an option: with `headless: true` Playwright would pick its headless
+ * shell, which silently ignores --load-extension — every request would then
+ * appear unblocked and the check would pass for the wrong reason.
+ *
+ * `chromium.executablePath()` returns the full browser, never the shell.
  */
-function resolveChromium(): string | undefined {
+function resolveChromium(): string {
     const explicit = process.env.CHROMIUM_PATH;
     if (explicit !== undefined && explicit !== '') return explicit;
 
+    // Preinstalled in this dev container.
     const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    return existsSync(preinstalled) ? preinstalled : undefined;
+    if (existsSync(preinstalled)) return preinstalled;
+
+    // Installed by `playwright-core install chromium`, as CI does.
+    const managed = chromium.executablePath();
+    if (existsSync(managed)) return managed;
+
+    throw new Error(
+        `no Chromium found (tried CHROMIUM_PATH, ${preinstalled}, ${managed}). ` +
+        'Run: pnpm --filter @addblocker/verify-extension exec playwright-core install chromium',
+    );
+}
+
+/**
+ * The headless shell ignores --load-extension without saying so, which would
+ * turn this check into a rubber stamp. Refuse it outright.
+ */
+function assertNotHeadlessShell(executable: string): void {
+    if (executable.includes('headless_shell') || executable.includes('headless-shell')) {
+        throw new Error(
+            `refusing to run against the headless shell (${executable}): it ignores ` +
+            '--load-extension, so every request would look unblocked. Use the full Chromium build.',
+        );
+    }
 }
 
 interface Probe {
@@ -141,8 +167,12 @@ async function main(): Promise<void> {
     await rm(profile, { recursive: true, force: true });
 
     let failed = false;
+    const executable = resolveChromium();
+    assertNotHeadlessShell(executable);
+    console.log(`Chromium: ${executable}\n`);
+
     const context = await chromium.launchPersistentContext(profile, {
-        executablePath: resolveChromium(),
+        executablePath: executable,
         headless: true,
         // Playwright passes --disable-extensions by default, which silently
         // defeats --load-extension.
@@ -162,7 +192,18 @@ async function main(): Promise<void> {
 
     try {
         const page = await context.newPage();
-        await page.goto(`chrome-extension://${extensionId}/verify.html`, { timeout: 60_000 });
+        try {
+            await page.goto(`chrome-extension://${extensionId}/verify.html`, { timeout: 60_000 });
+        } catch (err) {
+            // The extension page is unreachable only when Chrome never loaded
+            // the extension — usually a rejected ruleset or a browser build
+            // that ignores --load-extension.
+            throw new Error(
+                `the extension did not load in ${executable}. Chrome rejects an entire ` +
+                'ruleset when any rule in it is invalid, and the headless shell ignores ' +
+                `--load-extension entirely. Original error: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`,
+            );
+        }
 
         const state = await page.evaluate(async () => {
             const dnr = (globalThis as unknown as { chrome: typeof chrome }).chrome.declarativeNetRequest;

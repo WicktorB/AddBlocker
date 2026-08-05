@@ -25,16 +25,23 @@ const BUILT = join(ROOT, 'dist', 'extension');
 const STAGED = join(ROOT, 'dist', 'oracle-extension');
 const CACHE_DIR = join(ROOT, '.filter-cache');
 /**
- * Where to find Chromium. This dev container ships one at a fixed path; CI
- * installs its own through Playwright, which resolves it when we pass
- * undefined.
+ * Where to find a Chromium that can load extensions.
+ *
+ * Must always resolve to the *full* browser: with `headless: true` Playwright
+ * would otherwise pick its headless shell, which ignores --load-extension —
+ * every request would look unblocked and the comparison would be meaningless.
  */
-function resolveChromium(): string | undefined {
+function resolveChromium(): string {
     const explicit = process.env.CHROMIUM_PATH;
     if (explicit !== undefined && explicit !== '') return explicit;
 
     const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    return existsSync(preinstalled) ? preinstalled : undefined;
+    if (existsSync(preinstalled)) return preinstalled;
+
+    const managed = chromium.executablePath();
+    if (existsSync(managed)) return managed;
+
+    throw new Error(`no Chromium found (tried CHROMIUM_PATH, ${preinstalled}, ${managed})`);
 }
 
 /** How many domains to sample per category. Kept modest: each is a real fetch. */
@@ -200,8 +207,16 @@ async function main(): Promise<void> {
     const profile = join(ROOT, 'dist', 'oracle-profile');
     await rm(profile, { recursive: true, force: true });
 
+    const executable = resolveChromium();
+    if (executable.includes('headless_shell') || executable.includes('headless-shell')) {
+        // The shell ignores --load-extension, so nothing would be blocked and
+        // every probe would read as a divergence.
+        throw new Error(`refusing to run against the headless shell (${executable})`);
+    }
+    console.log(`Chromium: ${executable}`);
+
     const context = await chromium.launchPersistentContext(profile, {
-        executablePath: resolveChromium(),
+        executablePath: executable,
         headless: true,
         ignoreDefaultArgs: ['--disable-extensions'],
         timeout: 120_000,
