@@ -5,8 +5,6 @@
   "type": "module",
   "scripts": {
     "bench": "tsx src/run.ts",
-    "sanity": "tsx src/sanity.ts",
-    "validate": "tsx src/validate-chrome.ts",
     "calibrate": "tsx src/calibrate-domains.ts",
     "find-bad-rules": "tsx src/find-bad-rules.ts"
   },
@@ -16,5 +14,9 @@
     "playwright-core": "^1.62.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@addblocker/filter-parser": "workspace:*",
+    "@addblocker/dnr-compiler": "workspace:*"
   }
 }

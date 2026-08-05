@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Semantics of the ABP -> DNR mapping. Fast, so it runs first.
+      - name: Unit tests
+        run: pnpm test
+
+      # Fails on quota overruns, invalid rules, or a conversion rate above 3%.
+      - name: Build rulesets
+        run: pnpm build
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Chrome silently disables a whole ruleset containing one invalid rule.
+      # Only a real browser catches that, so this check is blocking.
+      - name: Verify in Chromium
+        run: pnpm verify
+
+      # Compares our decisions against tsurlfilter's. Fails on over-blocking
+      # or on any divergence we cannot explain.
+      - name: Differential oracle
+        run: pnpm oracle
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-output
+          path: |
+            dist/extension/manifest.json
+            dist/oracle-report.json
+          retention-days: 7

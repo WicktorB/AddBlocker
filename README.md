@@ -3,7 +3,33 @@
 Ad‑blocker Chrome Manifest V3, conçu pour se rapprocher au maximum d'uBlock Origin
 maintenant que MV2 n'existe plus sur Chrome (retrait définitif du Web Store : 31 août 2026).
 
-**État : conception.** Aucun code n'est encore écrit — l'analyse et l'architecture sont à valider avant implémentation.
+**État : phase 1 terminée** — le blocage réseau fonctionne. Phases 2 (cosmétique) et 3 (scriptlets) à venir.
+
+## Démarrage
+
+```bash
+pnpm install
+pnpm build     # télécharge les listes, compile les rulesets vers dist/extension
+pnpm check     # tests + build + vérification navigateur + oracle différentiel
+```
+
+Puis charger `dist/extension` via `chrome://extensions` → *Charger l'extension non empaquetée*.
+
+| Commande | Rôle |
+|---|---|
+| `pnpm test` | 73 tests unitaires du mapping ABP→DNR |
+| `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
+| `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
+| `pnpm oracle` | Compare nos décisions à `@adguard/tsurlfilter` |
+
+## Où ça en est
+
+| Domaine | État |
+|---|---|
+| Blocage réseau | ✅ 13 022 règles, 0,40 % de filtres perdus, 98,4 % d'accord avec l'oracle |
+| Filtrage cosmétique | ⏳ phase 2 — 25 823 filtres en attente |
+| Scriptlets | ⏳ phase 3 — 7 131 filtres en attente |
+| UI (popup, options, picker) | ⏳ phase 4 |
 
 ## Documentation
 

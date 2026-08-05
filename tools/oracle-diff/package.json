@@ -1,0 +1,13 @@
+{
+  "name": "@addblocker/oracle-diff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "oracle": "tsx src/oracle.ts" },
+  "devDependencies": {
+    "@adguard/tsurlfilter": "5.0.1",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0",
+    "playwright-core": "^1.49.0"
+  }
+}

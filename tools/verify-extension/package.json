@@ -1,0 +1,13 @@
+{
+  "name": "@addblocker/verify-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "verify": "tsx src/verify.ts" },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0",
+    "playwright-core": "^1.49.0",
+    "@types/chrome": "^0.0.287"
+  }
+}

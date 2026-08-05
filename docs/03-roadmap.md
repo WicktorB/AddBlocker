@@ -20,16 +20,53 @@ Validé dans Chromium 141 réel : rulesets acceptés, blocage effectif confirmé
 
 Enseignement le plus coûteux évité : une regex avec lookahead fait rejeter **tout un ruleset** en silence. D'où deux exigences reprises dans les phases suivantes — validation RE2 avant émission, et chargement réel dans Chrome en CI.
 
-## Phase 1 — Blocage réseau (2–3 semaines)
+## Phase 1 — Blocage réseau ✅ terminée
 
-Le prototype de phase 0 a déjà prouvé la viabilité et sert de base. Il reste à le durcir :
+> **Critères de sortie atteints** :
+> - filtres non convertis : **0,40 %** (cible < 3 %, phase 0 était à 5,0 %)
+> - oracle différentiel : **98,41 % d'accord, zéro sur-blocage, 5/5 divergences expliquées**
+> - chargement dans Chromium : **vert**, tous les rulesets acceptés et blocage vérifié
 
-- Promouvoir `tools/phase0-bench/src/{parser,compiler}.ts` en `packages/filter-parser` et `packages/dnr-compiler`.
-- Compléter la couverture des options rares ; expanser les jokers TLD (`example.*`) pour récupérer une partie des 5 % de filtres perdus.
-- Découpe en rulesets thématiques activables (`ads`, `privacy`, `annoyances`, régionales).
-- Oracle différentiel en CI contre `tsurlfilter` : toute divergence de décision est un bug à instruire.
+### Ce qui a été livré
 
-> **Critère de sortie** : taux de filtres non convertis **sous 3 %**, zéro divergence non expliquée face à l'oracle, chargement dans Chrome vert en CI.
+| Composant | Rôle |
+|---|---|
+| `packages/filter-parser` | Syntaxe ABP/uBO → AST typé |
+| `packages/dnr-compiler` | AST → règles DNR, fusion par domaines, validation |
+| `tools/build-rulesets` | Pipeline de build → `dist/extension` |
+| `tools/verify-extension` | Charge le build dans Chromium et vérifie le blocage réel |
+| `tools/oracle-diff` | Compare nos décisions à celles de `tsurlfilter` |
+| `.github/workflows/ci.yml` | Enchaîne les quatre étapes à chaque push |
+
+73 tests unitaires couvrent le mapping ABP→DNR, les bandes de priorité, la fusion et la validation.
+
+### Rulesets produits
+
+| Ruleset | Règles | Compression | Par défaut |
+|---|---|---|---|
+| `ads` (EasyList) | 2 802 | 21,2× | activé |
+| `privacy` (EasyPrivacy) | 6 728 | 1,5× | activé |
+| `ubo-core` | 1 242 | 1,1× | activé |
+| `ubo-badware` | 1 311 | 3,2× | activé |
+| `ubo-privacy` | 939 | 1,1× | activé |
+| `annoyances` | 260 | 1,0× | désactivé |
+
+**13 022 règles activées par défaut**, soit 43,4 % du minimum garanti. 226 regex sur 1 000.
+
+### Comment le taux de conversion est passé de 5,0 % à 0,40 %
+
+| Correctif | Filtres récupérés |
+|---|---|
+| `$popup` → blocage `main_frame` | ~2 825 |
+| `$elemhide`/`$generichide` reclassés (cosmétiques, pas des échecs réseau) | 661 |
+| Expansion des jokers TLD (`example.*`) | ~109 |
+| `$rewrite` reconnu comme alias de `$redirect`, `strict1p`/`strict3p` | ~20 |
+
+Le cas `$popup` mérite une note : DNR n'a pas de type de ressource « popup ». On le traduit en blocage `main_frame`, ce qui est *légèrement* plus large qu'uBO — une visite directe est bloquée aussi. Les filtres concernés ciblant exclusivement des domaines de spam et de paris, c'est le comportement souhaitable. C'est aussi la seule source de divergence avec l'oracle, et elle est classée automatiquement.
+
+### Garde-fou ajouté en cours de route
+
+Le build a attrapé des adresses IPv6 littérales (`[::1]`) dans des listes de domaines, que DNR n'accepte pas. Plutôt que de retirer l'entrée fautive — ce qui, sur une *exclusion*, élargirait le blocage et casserait des sites — le filtre entier est écarté. Principe retenu : **ne jamais sur-bloquer en silence**.
 
 ## Phase 2 — Filtrage cosmétique (3–4 semaines)
 

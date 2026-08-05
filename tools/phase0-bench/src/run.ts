@@ -10,8 +10,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { groupLists, loadLists } from './lists.js';
-import { parseList } from './parser.js';
-import { compile } from './compiler.js';
+import { parseList } from '@addblocker/filter-parser';
+import { compile } from '@addblocker/dnr-compiler';
 import { convertWithAdguard, type AdguardResult } from './bench-adguard.js';
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'out');

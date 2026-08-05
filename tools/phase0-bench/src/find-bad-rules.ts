@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { groupLists, loadLists } from './lists.js';
-import { parseList } from './parser.js';
-import { compile, type DnrRule } from './compiler.js';
+import { parseList } from '@addblocker/filter-parser';
+import { compile, type DnrRule } from '@addblocker/dnr-compiler';
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');

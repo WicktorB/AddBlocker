@@ -1,0 +1,12 @@
+{
+  "name": "@addblocker/build-rulesets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsx src/build.ts" },
+  "dependencies": {
+    "@addblocker/filter-parser": "workspace:*",
+    "@addblocker/dnr-compiler": "workspace:*"
+  },
+  "devDependencies": { "tsx": "^4.19.2", "@types/node": "^22.10.0" }
+}

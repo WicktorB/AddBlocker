@@ -4,8 +4,14 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
+    "test": "vitest run",
+    "build": "pnpm --filter @addblocker/build-rulesets run build",
+    "verify": "pnpm --filter @addblocker/verify-extension run verify",
+    "oracle": "pnpm --filter @addblocker/oracle-diff run oracle",
     "bench": "pnpm --filter @addblocker/phase0-bench run bench",
-    "sanity": "pnpm --filter @addblocker/phase0-bench run sanity",
-    "validate": "pnpm --filter @addblocker/phase0-bench run validate"
+    "check": "pnpm test && pnpm build && pnpm verify && pnpm oracle"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.7"
   }
 }
