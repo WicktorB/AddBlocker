@@ -47,6 +47,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
 
+  packages/scriptlet-compiler:
+    dependencies:
+      '@addblocker/scriptlet-runtime':
+        specifier: workspace:*
+        version: link:../scriptlet-runtime
+    devDependencies:
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
+
+  packages/scriptlet-runtime:
+    devDependencies:
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
+
   tools/build-rulesets:
     dependencies:
       '@addblocker/cosmetic-compiler':
@@ -61,6 +77,12 @@ importers:
       '@addblocker/filter-parser':
         specifier: workspace:*
         version: link:../../packages/filter-parser
+      '@addblocker/scriptlet-compiler':
+        specifier: workspace:*
+        version: link:../../packages/scriptlet-compiler
+      '@addblocker/scriptlet-runtime':
+        specifier: workspace:*
+        version: link:../../packages/scriptlet-runtime
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

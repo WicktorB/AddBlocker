@@ -45,6 +45,10 @@ jobs:
       - name: Verify cosmetic filtering
         run: pnpm cosmetic-check
 
+      # Scriptlets must run in the page's own world, before the page's scripts.
+      - name: Verify scriptlets
+        run: pnpm scriptlet-check
+
       # Compares our decisions against tsurlfilter's. Fails on over-blocking
       # or on any divergence we cannot explain.
       - name: Differential oracle

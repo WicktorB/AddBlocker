@@ -16,6 +16,7 @@ import { compile, validateRuleset } from '@addblocker/dnr-compiler';
 
 import { QUOTAS, RULESETS, type Ruleset } from './catalog.js';
 import { buildCosmetic, type ContentScriptEntry } from './cosmetic.js';
+import { buildScriptlets } from './scriptlets.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const CACHE_DIR = join(ROOT, '.filter-cache');
@@ -177,6 +178,32 @@ async function main(): Promise<void> {
     console.log(`  patterns: ${cosmetic.stats.manifestPatterns} in the manifest, ` +
         `${cosmetic.stats.dynamicPatterns} registered dynamically (adr/0002)`);
 
+    console.log('\nBuilding scriptlets');
+    const scriptlets = await buildScriptlets(rawLists, OUT_DIR);
+    console.log(`  ${scriptlets.stats.domains} domains in ${scriptlets.stats.buckets} buckets, ` +
+        `${scriptlets.stats.invocations} invocations`);
+    console.log(`  exceptions: ${scriptlets.stats.exceptions}, ` +
+        `generic skipped: ${scriptlets.stats.genericSkipped}`);
+    console.log(`  payload: runtime ${(scriptlets.stats.runtimeBytes / 1024).toFixed(0)}kB, ` +
+        `buckets ${(scriptlets.stats.bucketBytes / 1024).toFixed(0)}kB total`);
+
+    const unknown = Object.entries(scriptlets.stats.unknownByName).sort((a, b) => b[1] - a[1]);
+    if (unknown.length > 0) {
+        const dropped = scriptlets.stats.unknownScriptlets;
+        const covered = scriptlets.stats.invocations;
+        console.log(`  not in the catalogue: ${dropped} invocation(s) across ${unknown.length} scriptlet(s) ` +
+            `— ${((100 * covered) / (covered + dropped)).toFixed(1)}% coverage`);
+        for (const [name, count] of unknown.slice(0, 8)) console.log(`    ${String(count).padStart(4)}  ${name}`);
+    }
+
+    // Cosmetic buckets run in the isolated world, scriptlets in the page's own.
+    const registrations = [...cosmetic.registrations, ...scriptlets.registrations];
+    await writeFile(
+        join(OUT_DIR, 'cosmetic', 'registrations.json'),
+        JSON.stringify(registrations),
+        'utf8',
+    );
+
     await writeManifest(built, cosmetic.contentScripts);
     await cp(join(dirname(fileURLToPath(import.meta.url)), 'sw.js'), join(OUT_DIR, 'sw.js'));
 
@@ -187,7 +214,7 @@ async function main(): Promise<void> {
     const unconvertible = built.reduce((n, b) => n + b.unconvertible, 0);
     const cosmeticScoped = built.reduce((n, b) => n + b.cosmeticScoped, 0);
     const cosmeticFilters = built.reduce((n, b) => n + b.cosmeticFilters, 0);
-    const scriptlets = built.reduce((n, b) => n + b.scriptletFilters, 0);
+    const scriptletFilters = built.reduce((n, b) => n + b.scriptletFilters, 0);
     const regex = built.reduce((n, b) => n + b.regexCount, 0);
 
     const unconvertibleRate = (100 * unconvertible) / Math.max(networkFilters, 1);
@@ -200,7 +227,7 @@ async function main(): Promise<void> {
     console.log(`  regex used:             ${regex} / ${QUOTAS.maxRegexRules}`);
     console.log(`  rulesets:               ${built.length} / ${QUOTAS.maxStaticRulesets}`);
     console.log(`  cosmetic filters:       ${cosmeticFilters}`);
-    console.log(`  scriptlet filters:      ${scriptlets} (phase 3)`);
+    console.log(`  scriptlet filters:      ${scriptletFilters}`);
 
     console.log('\nQuota');
     const withinGuaranteed = enabledRules <= QUOTAS.guaranteedStaticRules;

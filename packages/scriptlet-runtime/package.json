@@ -1,0 +1,9 @@
+{
+  "name": "@addblocker/scriptlet-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/run.ts",
+  "exports": { ".": "./src/run.ts", "./catalog": "./src/catalog.ts" },
+  "devDependencies": { "vitest": "^3.0.0" }
+}

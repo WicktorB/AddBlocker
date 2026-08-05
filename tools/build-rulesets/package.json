@@ -10,7 +10,9 @@
     "@addblocker/dnr-compiler": "workspace:*",
     "@addblocker/filter-parser": "workspace:*",
     "@addblocker/cosmetic-compiler": "workspace:*",
-    "@addblocker/cosmetic-runtime": "workspace:*"
+    "@addblocker/cosmetic-runtime": "workspace:*",
+    "@addblocker/scriptlet-compiler": "workspace:*",
+    "@addblocker/scriptlet-runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

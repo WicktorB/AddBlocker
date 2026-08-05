@@ -3,7 +3,7 @@
 Ad‑blocker Chrome Manifest V3, conçu pour se rapprocher au maximum d'uBlock Origin
 maintenant que MV2 n'existe plus sur Chrome (retrait définitif du Web Store : 31 août 2026).
 
-**État : phases 1 et 2 terminées** — blocage réseau et filtrage cosmétique fonctionnent. Phase 3 (scriptlets) à venir.
+**État : phases 1 à 3 terminées** — blocage réseau, filtrage cosmétique et scriptlets fonctionnent. Phase 4 (UI) à venir.
 
 ## Démarrage
 
@@ -17,10 +17,11 @@ Puis charger `dist/extension` via `chrome://extensions` → *Charger l'extension
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 119 tests unitaires (mapping ABP→DNR, cosmétique, procédural) |
+| `pnpm test` | 158 tests unitaires (DNR, cosmétique, procédural, scriptlets) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
 | `pnpm cosmetic-check` | Vérifie le masquage et l'absence de flash |
+| `pnpm scriptlet-check` | Vérifie les scriptlets dans le monde de la page |
 | `pnpm oracle` | Compare nos décisions à `@adguard/tsurlfilter` |
 
 ## Où ça en est
@@ -29,7 +30,7 @@ Puis charger `dist/extension` via `chrome://extensions` → *Charger l'extension
 |---|---|
 | Blocage réseau | ✅ 13 022 règles, 0,40 % de filtres perdus, 98,4 % d'accord avec l'oracle |
 | Filtrage cosmétique | ✅ 22 113 domaines, 56 100 sélecteurs, sans flash |
-| Scriptlets | ⏳ phase 3 — 7 131 filtres en attente |
+| Scriptlets | ✅ 61 805 invocations, 99,5 % du catalogue couvert |
 | UI (popup, options, picker) | ⏳ phase 4 |
 
 ## Documentation
