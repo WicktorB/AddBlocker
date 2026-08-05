@@ -16,14 +16,17 @@ import {
     buildAllowlistRules,
     buildCosmeticUserRules,
     buildExcludeMatches,
+    exclusionsDiffer,
     normaliseHostname,
     parseUserFilter,
+    resolveRulesets,
     type Settings,
 } from './settings.js';
 
 const REGISTRATIONS_URL = 'cosmetic/registrations.json';
 const SETTINGS_KEY = 'settings';
-const USER_COSMETIC_SCRIPT_ID = 'user-cosmetic';
+/** Exclusions last written to the registered scripts, to avoid rewriting them. */
+const APPLIED_EXCLUSIONS_KEY = 'appliedExcludeMatches';
 
 declare const chrome: typeof globalThis extends { chrome: infer C } ? C : any;
 
@@ -36,18 +39,25 @@ export async function saveSettings(settings: Settings): Promise<void> {
     await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
 }
 
-/** Registers the generated bucket scripts, honouring disabled sites. */
-async function syncContentScripts(settings: Settings): Promise<void> {
+/**
+ * Registers the generated bucket scripts, honouring disabled sites.
+ *
+ * Returns whether the exclusions ended up applied, so the caller only records
+ * them as such when they really are.
+ */
+async function syncContentScripts(
+    excludeMatches: string[],
+    exclusionsChanged: boolean,
+): Promise<boolean> {
     let wanted: Array<Record<string, unknown>>;
     try {
         const response = await fetch(chrome.runtime.getURL(REGISTRATIONS_URL));
         wanted = await response.json();
     } catch (err) {
         console.error('[addblocker] cannot read registrations:', err);
-        return;
+        return false;
     }
 
-    const excludeMatches = buildExcludeMatches(settings);
     const withExclusions = wanted.map((script) => ({
         ...script,
         ...(excludeMatches.length > 0 ? { excludeMatches } : {}),
@@ -59,75 +69,51 @@ async function syncContentScripts(settings: Settings): Promise<void> {
 
     const stale = existing
         .map((script: { id: string }) => script.id)
-        .filter((id: string) => !wantedIds.has(id) && id !== USER_COSMETIC_SCRIPT_ID);
+        .filter((id: string) => !wantedIds.has(id));
     if (stale.length > 0) await chrome.scripting.unregisterContentScripts({ ids: stale });
 
     const missing = withExclusions.filter((script) => !existingIds.has(script.id as string));
     const present = withExclusions.filter((script) => existingIds.has(script.id as string));
 
+    // Scripts registered now already carry the current exclusions.
     if (missing.length > 0) {
         try {
             await chrome.scripting.registerContentScripts(missing);
         } catch (err) {
             console.error('[addblocker] registration failed:', err);
+            return false;
         }
     }
 
-    // Updating in place is what applies a newly disabled site without paying
-    // to re-register several thousand match patterns.
-    if (present.length > 0 && excludeMatches.length >= 0) {
+    // Rewriting exclusions across every registered script takes seconds. The
+    // ones already registered only need it when the exclusions actually
+    // changed — which happens when a site is toggled, not when a filter is
+    // added. Skipping it otherwise is what keeps a new filter from queueing
+    // behind work that would change nothing.
+    if (present.length > 0 && exclusionsChanged) {
         try {
             await chrome.scripting.updateContentScripts(
                 present.map((script) => ({ id: script.id, excludeMatches })),
             );
         } catch (err) {
             console.error('[addblocker] updating exclusions failed:', err);
+            return false;
         }
     }
+
+    return true;
 }
 
-/** Applies the user's own cosmetic filters through one small script. */
+/**
+ * Publishes the user's own cosmetic filters.
+ *
+ * The script that reads them is registered at build time along with the
+ * generated buckets, so this is a storage write and nothing else — no
+ * registration mutation, which is what makes a new filter land immediately
+ * instead of seconds later.
+ */
 async function syncUserCosmetic(settings: Settings): Promise<void> {
-    const rules = buildCosmeticUserRules(settings);
-    const hasAny = rules.generic.length > 0 || Object.keys(rules.byDomain).length > 0;
-
-    const existing = await chrome.scripting.getRegisteredContentScripts();
-    const alreadyThere = existing.some((s: { id: string }) => s.id === USER_COSMETIC_SCRIPT_ID);
-
-    if (!hasAny) {
-        if (alreadyThere) {
-            await chrome.scripting.unregisterContentScripts({ ids: [USER_COSMETIC_SCRIPT_ID] });
-        }
-        return;
-    }
-
-    // The built-in buckets are generated at build time, so their selectors are
-    // inlined. User filters change at runtime, so they live in storage and a
-    // small static script reads them. That read is async — a brief flash is
-    // possible on the very first paint, which is an acceptable trade for a
-    // handful of filters the user just wrote.
-    await chrome.storage.local.set({ userCosmeticRules: rules });
-
-    if (!alreadyThere) {
-        try {
-            await chrome.scripting.registerContentScripts([{
-                id: USER_COSMETIC_SCRIPT_ID,
-                matches: ['*://*/*'],
-                js: ['user-cosmetic.js'],
-                runAt: 'document_start',
-                allFrames: true,
-                excludeMatches: buildExcludeMatches(settings),
-                persistAcrossSessions: true,
-            }]);
-        } catch (err) {
-            console.error('[addblocker] user cosmetic registration failed:', err);
-        }
-    } else {
-        await chrome.scripting.updateContentScripts([{
-            id: USER_COSMETIC_SCRIPT_ID,
-            excludeMatches: buildExcludeMatches(settings),
-        }]);
-    }
+    await chrome.storage.local.set({ userCosmeticRules: buildCosmeticUserRules(settings) });
 }
 
 /** Rewrites the dynamic rules derived from settings. */
@@ -162,15 +148,17 @@ async function syncDynamicRules(settings: Settings): Promise<void> {
 /** Enables or disables static rulesets per the user's choice. */
 async function syncRulesets(settings: Settings): Promise<void> {
     const manifest = chrome.runtime.getManifest();
-    const all: Array<{ id: string }> = manifest.declarative_net_request?.rule_resources ?? [];
-    const disabled = new Set(settings.disabledRulesets);
+    const declared: Array<{ id: string; enabled?: boolean }> =
+        manifest.declarative_net_request?.rule_resources ?? [];
 
-    const enableRulesetIds = all.map((r) => r.id).filter((id) => !disabled.has(id));
-    const disableRulesetIds = all.map((r) => r.id).filter((id) => disabled.has(id));
+    const { enable, disable } = resolveRulesets(
+        settings,
+        declared.map((r) => ({ id: r.id, enabled: r.enabled !== false })),
+    );
 
     try {
         await chrome.declarativeNetRequest.updateEnabledRulesets({
-            enableRulesetIds, disableRulesetIds,
+            enableRulesetIds: enable, disableRulesetIds: disable,
         });
     } catch (err) {
         console.error('[addblocker] ruleset toggle failed:', err);
@@ -186,33 +174,50 @@ async function syncRulesets(settings: Settings): Promise<void> {
  * that matters: it is what makes a broken site work again on reload.
  */
 async function applyFastSettings(settings: Settings): Promise<void> {
-    await Promise.all([syncDynamicRules(settings), syncRulesets(settings)]);
+    await Promise.all([
+        syncDynamicRules(settings),
+        syncRulesets(settings),
+        syncUserCosmetic(settings),
+    ]);
 }
 
-/** Applies the slow half in the background; never awaited by a UI action. */
-function applyScriptSettings(settings: Settings): void {
-    void (async () => {
-        try {
-            await syncContentScripts(settings);
-            await syncUserCosmetic(settings);
-        } catch (err) {
-            console.error('[addblocker] script sync failed:', err);
+/**
+ * Serialises script synchronisation.
+ *
+ * Two overlapping syncs fight over the same registration set — one tries to
+ * register what the other is registering — so they queue instead.
+ */
+let scriptSync: Promise<void> = Promise.resolve();
+
+function syncScripts(settings: Settings): Promise<void> {
+    scriptSync = scriptSync.then(async () => {
+        const excludeMatches = buildExcludeMatches(settings);
+        const stored = await chrome.storage.local.get(APPLIED_EXCLUSIONS_KEY);
+        const changed = exclusionsDiffer(stored[APPLIED_EXCLUSIONS_KEY], excludeMatches);
+
+        if (await syncContentScripts(excludeMatches, changed)) {
+            await chrome.storage.local.set({ [APPLIED_EXCLUSIONS_KEY]: excludeMatches });
         }
-    })();
+    }).catch((err: unknown) => {
+        console.error('[addblocker] script sync failed:', err);
+    });
+    return scriptSync;
 }
 
 export async function applySettings(): Promise<void> {
     const settings = await loadSettings();
     await applyFastSettings(settings);
-    applyScriptSettings(settings);
+    // Deliberately not awaited: the DNR half above is what unbreaks a site, and
+    // it lands in milliseconds. Making the UI wait on the script half would
+    // make a click feel broken.
+    void syncScripts(settings);
 }
 
 /** Awaits everything — used at install time, where there is no user waiting. */
 export async function applySettingsFully(): Promise<void> {
     const settings = await loadSettings();
     await applyFastSettings(settings);
-    await syncContentScripts(settings);
-    await syncUserCosmetic(settings);
+    await syncScripts(settings);
 }
 
 /**

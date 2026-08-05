@@ -20,7 +20,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 209 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
+| `pnpm test` | 219 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
 | `pnpm cosmetic-check` | Vérifie le masquage et l'absence de flash |

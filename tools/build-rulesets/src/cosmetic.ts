@@ -130,14 +130,37 @@ export async function buildCosmetic(listContents: string[], outDir: string): Pro
         });
     }
 
-    // The generic sheet is the one thing cheap enough for the manifest: a
-    // single pattern, and it must be in place before anything else renders.
-    const contentScripts: ContentScriptEntry[] = [{
+    // The generic sheet and the user's own filters run everywhere, so the
+    // manifest would hold them cheaply — one pattern each. They are registered
+    // dynamically anyway, because a manifest content script cannot have its
+    // exclusions changed at runtime, and "turn filtering off on this site" has
+    // to switch off cosmetic filtering too. The cost is that on a brand-new
+    // profile they are inert until the first registration lands; Chrome
+    // persists registrations, so every later start has them from the outset.
+    registrations.push({
+        id: 'generic',
         matches: ['*://*/*'],
         js: ['cosmetic/runtime.js', 'cosmetic/generic.js'],
-        run_at: 'document_start',
-        all_frames: true,
-    }];
+        runAt: 'document_start',
+        allFrames: true,
+        persistAcrossSessions: true,
+    });
+
+    // Registered unconditionally rather than when the first filter appears:
+    // adding one script to an existing registration set costs seconds
+    // (measured — docs/adr/0002), which would be paid at the worst moment,
+    // right after the user creates a filter. It reads its selectors from
+    // storage, so a new filter is a storage write and nothing more.
+    registrations.push({
+        id: 'user-cosmetic',
+        matches: ['*://*/*'],
+        js: ['user-cosmetic.js'],
+        runAt: 'document_start',
+        allFrames: true,
+        persistAcrossSessions: true,
+    });
+
+    const contentScripts: ContentScriptEntry[] = [];
 
     assertPatternsValid(contentScripts);
     assertPatternsValid(registrations.map((r) => ({ ...r, run_at: 'document_start' as const, all_frames: true })));

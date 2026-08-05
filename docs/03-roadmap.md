@@ -163,7 +163,7 @@ Cela prouve que le mécanisme fonctionne (`aopr` lève bien, `set` force bien la
 - **Options** : activation des listes, sites désactivés, éditeur de filtres.
 - **Picker** : surligne l'élément survolé, construit le sélecteur le plus durable possible et **annonce sa solidité avant validation**.
 
-209 tests unitaires.
+219 tests unitaires.
 
 ### La mesure qui a dicté la conception
 
@@ -172,10 +172,18 @@ Désactiver un site touche deux mécanismes. Mesuré dans Chromium :
 | Opération | Coût |
 |---|---|
 | Règle DNR dynamique (`allowAllRequests`) | **5 ms** |
-| `updateContentScripts` (144 scripts) | **jusqu'à 15 s** |
-| Enregistrement initial des 144 buckets | ~9 s, une seule fois |
+| Mutation de l'ensemble des scripts enregistrés | **7,5 s**, quel que soit ce qu'on ajoute |
+| Enregistrement initial des 146 buckets | ~9 s, une seule fois |
 
 La réponse à l'utilisateur ne peut donc pas attendre les content scripts. Le service worker applique d'abord le chemin rapide (DNR + rulesets) puis lance la synchronisation des scripts **en arrière-plan**. Résultat mesuré : `toggleSite` répond en ~150 ms, et le rechargement de page qui suit voit déjà le site débloqué — ce qui est précisément ce que l'utilisateur attend d'un site cassé.
+
+Les 7,5 s ne dépendent pas de ce qu'on ajoute mais de ce qui est **déjà** enregistré : Chrome réécrit tout l'ensemble persisté. La conséquence est qu'aucun script ne doit être enregistré à l'exécution — celui qui porte les filtres de l'utilisateur est enregistré au build et lit ses sélecteurs dans `chrome.storage`. Ajouter un filtre coûte alors une écriture, et l'effet est visible au rechargement suivant (**~400 ms** mesurés, contre 1 220 ms auparavant). Détail complet dans [ADR 0002](adr/0002-enregistrement-des-content-scripts.md).
+
+### Deux défauts trouvés en corrigeant la CI
+
+**Le cosmétique générique ignorait les sites désactivés.** La feuille générique était déclarée dans le manifest, et un content script du manifest ne peut pas voir ses `exclude_matches` modifiées à l'exécution : couper le filtrage sur un site coupait le réseau mais laissait des éléments masqués. Corrigé en enregistrant la feuille comme les autres. Le test qui le couvre échoue bien sur l'ancien schéma — vérifié, sinon il ne prouverait rien.
+
+**Les listes désactivées par défaut s'activaient toutes seules.** Le worker activait tout ce qui n'était pas explicitement désactivé, écrasant le `enabled: false` du manifest : la liste *annoyances*, qui ne doit pas être active par défaut, l'était. Un seul ensemble « désactivé » ne peut pas distinguer « l'utilisateur n'a rien choisi » de « l'utilisateur a activé » ; les réglages enregistrent maintenant les deux écarts et le manifest reste la référence. Ce défaut était présent depuis la phase 1 et masqué par la lenteur du worker : en le rendant rapide, la vérification a commencé à observer l'état réel.
 
 ### Choix notables
 

@@ -9,19 +9,27 @@ async function load() {
 
     const manifest = chrome.runtime.getManifest();
     const rulesets = manifest.declarative_net_request?.rule_resources ?? [];
-    const disabled = new Set(settings.disabledRulesets);
+    const forcedOff = new Set(settings.disabledRulesets);
+    const forcedOn = new Set(settings.enabledRulesets ?? []);
 
     $('rulesets').innerHTML = '';
     for (const ruleset of rulesets) {
+        const shipsEnabled = ruleset.enabled !== false;
         const label = document.createElement('label');
         label.className = 'row';
         const box = document.createElement('input');
         box.type = 'checkbox';
-        box.checked = !disabled.has(ruleset.id);
+        // Mirrors resolveRulesets: the manifest sets the default and the
+        // settings only record where the user departed from it.
+        box.checked = forcedOn.has(ruleset.id) || (shipsEnabled && !forcedOff.has(ruleset.id));
         box.addEventListener('change', async () => {
-            settings.disabledRulesets = box.checked
-                ? settings.disabledRulesets.filter((id) => id !== ruleset.id)
-                : [...settings.disabledRulesets, ruleset.id];
+            settings.disabledRulesets = settings.disabledRulesets.filter((id) => id !== ruleset.id);
+            settings.enabledRulesets = (settings.enabledRulesets ?? [])
+                .filter((id) => id !== ruleset.id);
+            if (box.checked !== shipsEnabled) {
+                const list = box.checked ? 'enabledRulesets' : 'disabledRulesets';
+                settings[list] = [...settings[list], ruleset.id];
+            }
             await save('Liste mise à jour.');
         });
         label.append(box, document.createTextNode(ruleset.id));

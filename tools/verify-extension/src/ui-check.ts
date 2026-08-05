@@ -48,6 +48,17 @@ async function pickBlockedDomain(): Promise<string> {
     return domain;
 }
 
+/**
+ * A selector the generic sheet hides, taken from the build rather than
+ * hard-coded so the check keeps testing something real as lists change.
+ */
+async function pickGenericId(): Promise<string> {
+    const sheet = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    const match = /"#([A-Za-z][\w-]{2,40})"/.exec(sheet);
+    if (match === null) throw new Error('no plain id selector found in the generic sheet');
+    return match[1];
+}
+
 async function stageExtension(): Promise<string> {
     await rm(STAGED, { recursive: true, force: true });
     await cp(BUILT, STAGED, { recursive: true });
@@ -68,7 +79,7 @@ async function stageExtension(): Promise<string> {
     return [...digest].map((c) => String.fromCharCode(parseInt(c, 16) + 97)).join('');
 }
 
-function startServer(blockedDomain: string): Promise<{ server: Server; port: number }> {
+function startServer(blockedDomain: string, genericId: string): Promise<{ server: Server; port: number }> {
     const server = createServer((req, res) => {
         if (req.url?.endsWith('.js')) {
             res.writeHead(200, {
@@ -81,6 +92,7 @@ function startServer(blockedDomain: string): Promise<{ server: Server; port: num
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end(`<!doctype html><meta charset="utf-8"><title>ui</title>
 <div class="ab-target">an element to hide</div>
+<div id="${genericId}">hidden by the generic sheet</div>
 <div id="sentinel">stays visible</div>
 <script>
 window.__blocked = null;
@@ -110,10 +122,19 @@ async function send(context: BrowserContext, extensionId: string, message: unkno
     return result;
 }
 
+/** State of the test page, as the user would see it. */
+interface PageState {
+    blocked: boolean | null;
+    userFilterHidden: boolean;
+    genericHidden: boolean;
+    sentinelVisible: boolean;
+}
+
 async function main(): Promise<void> {
     const blockedDomain = await pickBlockedDomain();
+    const genericId = await pickGenericId();
     const extensionId = await stageExtension();
-    const { server, port } = await startServer(blockedDomain);
+    const { server, port } = await startServer(blockedDomain, genericId);
     const profile = join(ROOT, 'dist', 'ui-profile');
     await rm(profile, { recursive: true, force: true });
 
@@ -142,6 +163,49 @@ async function main(): Promise<void> {
     };
 
     const site = 'ui-test-site.example';
+
+    /** Loads the test page once and reports what the user would see. */
+    const readPage = async (): Promise<PageState> => {
+        const page = await context.newPage();
+        await page.goto(`http://${site}:${port}/`, { waitUntil: 'load' });
+        await page.waitForTimeout(150);
+        // No helper functions in here: tsx transpiles them with an esbuild
+        // shim that does not exist in the page.
+        const state = await page.evaluate((id) => {
+            const target = document.querySelector('.ab-target');
+            const generic = document.getElementById(id);
+            const sentinel = document.getElementById('sentinel');
+            return {
+                blocked: (window as unknown as { __blocked: boolean | null }).__blocked,
+                userFilterHidden: target === null || target.getBoundingClientRect().height === 0,
+                genericHidden: generic === null || generic.getBoundingClientRect().height === 0,
+                sentinelVisible: sentinel !== null && sentinel.getBoundingClientRect().height > 0,
+            };
+        }, genericId);
+        await page.close();
+        return state;
+    };
+
+    /**
+     * Reloads until the page looks as expected, up to a budget.
+     *
+     * Settings do not all take effect at the same speed — a DNR rule lands in
+     * milliseconds while rewriting script exclusions takes seconds — so a fixed
+     * sleep would either be slow or flaky depending on the machine. Waiting for
+     * the condition and reporting how long it took turns a latency regression
+     * into a number instead of an intermittent failure.
+     */
+    const waitForPage = async (
+        want: (state: PageState) => boolean,
+        budgetMs = 30_000,
+    ): Promise<{ state: PageState; ms: number }> => {
+        const started = Date.now();
+        let state = await readPage();
+        while (!want(state) && Date.now() - started < budgetMs) {
+            state = await readPage();
+        }
+        return { state, ms: Date.now() - started };
+    };
 
     try {
         // Registering ~144 bucket scripts takes about 9 seconds on a fresh
@@ -175,14 +239,13 @@ async function main(): Promise<void> {
         };
         check(state?.settings !== undefined, 'service worker answers getState');
 
-        // Baseline: the probe request is blocked before we change anything.
+        // Baseline: before touching anything, the request is blocked and the
+        // generic sheet has hidden its element.
         console.log('\nBlocking a site, then turning it off there');
-        const before = await context.newPage();
-        await before.goto(`http://${site}:${port}/`, { waitUntil: 'load' });
-        await before.waitForTimeout(400);
-        const blockedBefore = await before.evaluate(() => (window as unknown as { __blocked: boolean | null }).__blocked);
-        await before.close();
-        check(blockedBefore === true, 'request is blocked before disabling', `__blocked=${blockedBefore}`);
+        const baseline = await waitForPage((s) => s.blocked === true && s.genericHidden);
+        check(baseline.state.blocked === true, 'request is blocked before disabling',
+            `__blocked=${baseline.state.blocked}`);
+        check(baseline.state.genericHidden, `the generic sheet hides #${genericId}`);
 
         const toggleStarted = Date.now();
         const toggled = await send(context, extensionId, {
@@ -198,25 +261,26 @@ async function main(): Promise<void> {
         check(afterSettings?.settings?.disabledSites.includes(site) === true,
             'the site is recorded as disabled');
 
-        // The allowlist rule must actually let the request through now.
-        const after = await context.newPage();
-        await after.goto(`http://${site}:${port}/`, { waitUntil: 'load' });
-        await after.waitForTimeout(600);
-        const blockedAfter = await after.evaluate(() => (window as unknown as { __blocked: boolean | null }).__blocked);
-        await after.close();
-        check(blockedAfter === false, 'request goes through once the site is disabled',
-            `__blocked=${blockedAfter}`);
+        // "Off here" has to mean off for both halves. The network half lands in
+        // milliseconds; cosmetic filtering stops once the script exclusions are
+        // rewritten, which is slower, so each is waited for on its own terms.
+        const unblocked = await waitForPage((s) => s.blocked === false);
+        check(unblocked.state.blocked === false, 'request goes through once the site is disabled',
+            `__blocked=${unblocked.state.blocked} after ${unblocked.ms}ms`);
+
+        const uncosmetic = await waitForPage((s) => !s.genericHidden);
+        check(!uncosmetic.state.genericHidden,
+            'cosmetic filtering stops on a disabled site', `after ${uncosmetic.ms}ms`);
 
         // And back off again, so the toggle is genuinely reversible.
         await send(context, extensionId, { type: 'toggleSite', payload: { hostname: site } });
-        const restored = await context.newPage();
-        await restored.goto(`http://${site}:${port}/`, { waitUntil: 'load' });
-        await restored.waitForTimeout(600);
-        const blockedRestored = await restored.evaluate(
-            () => (window as unknown as { __blocked: boolean | null }).__blocked,
-        );
-        await restored.close();
-        check(blockedRestored === true, 're-enabling restores blocking', `__blocked=${blockedRestored}`);
+        const reblocked = await waitForPage((s) => s.blocked === true);
+        check(reblocked.state.blocked === true, 're-enabling restores blocking',
+            `__blocked=${reblocked.state.blocked} after ${reblocked.ms}ms`);
+
+        const recosmetic = await waitForPage((s) => s.genericHidden);
+        check(recosmetic.state.genericHidden, 're-enabling restores cosmetic filtering',
+            `after ${recosmetic.ms}ms`);
 
         // Creating a filter, as the picker does.
         console.log('\nCreating a filter');
@@ -230,20 +294,10 @@ async function main(): Promise<void> {
         check(withFilter?.settings?.userFilters.includes(`${site}##.ab-target`) === true,
             'the filter is stored');
 
-        const filtered = await context.newPage();
-        await filtered.goto(`http://${site}:${port}/`, { waitUntil: 'load' });
-        await filtered.waitForTimeout(700);
-        const result = await filtered.evaluate(() => {
-            const target = document.querySelector('.ab-target');
-            const sentinel = document.querySelector('#sentinel');
-            return {
-                hidden: target === null || target.getBoundingClientRect().height === 0,
-                sentinelVisible: sentinel !== null && sentinel.getBoundingClientRect().height > 0,
-            };
-        });
-        await filtered.close();
-        check(result.hidden, 'the element is hidden by the user filter');
-        check(result.sentinelVisible, 'other content is untouched');
+        const filtered = await waitForPage((s) => s.userFilterHidden);
+        check(filtered.state.userFilterHidden, 'the element is hidden by the user filter',
+            `after ${filtered.ms}ms`);
+        check(filtered.state.sentinelVisible, 'other content is untouched');
 
         // The picker must be reachable — the popup injects it by URL.
         const pickerUrl = `chrome-extension://${extensionId}/picker.js`;

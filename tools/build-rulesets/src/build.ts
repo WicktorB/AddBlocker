@@ -146,7 +146,10 @@ function writeManifest(built: BuiltRuleset[], contentScripts: ContentScriptEntry
                 path: `rules/${ruleset.id}.json`,
             })),
         },
-        content_scripts: contentScripts,
+        // Empty in practice: everything is registered dynamically so it can be
+        // switched off per site. Kept so a script that must run before the
+        // worker wakes can be declared here if one ever needs to.
+        ...(contentScripts.length > 0 ? { content_scripts: contentScripts } : {}),
         action: {
             default_popup: 'popup.html',
             default_title: 'AddBlocker',

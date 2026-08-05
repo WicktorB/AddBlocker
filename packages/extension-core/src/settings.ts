@@ -13,12 +13,15 @@ export interface Settings {
     userFilters: string[];
     /** Ruleset ids the user turned off. */
     disabledRulesets: string[];
+    /** Ruleset ids the user turned on although they ship off. */
+    enabledRulesets: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
     disabledSites: [],
     userFilters: [],
     disabledRulesets: [],
+    enabledRulesets: [],
 };
 
 /**
@@ -157,4 +160,55 @@ export function buildCosmeticUserRules(settings: Settings): CosmeticUserRules {
 /** Match patterns for the sites where content scripts must not run. */
 export function buildExcludeMatches(settings: Settings): string[] {
     return settings.disabledSites.map((domain) => `*://*.${domain}/*`);
+}
+
+/** A ruleset as the manifest declares it. */
+export interface RulesetDefault {
+    id: string;
+    /** Whether it ships enabled. */
+    enabled: boolean;
+}
+
+/**
+ * Decides which rulesets to enable.
+ *
+ * The manifest holds the default and the settings hold only the user's
+ * deviations from it, which is why there are two lists rather than one: with a
+ * single "disabled" list, a ruleset the user never touched is indistinguishable
+ * from one they turned on, and anything shipping off — the annoyances list —
+ * would silently come on for everybody.
+ */
+export function resolveRulesets(
+    settings: Settings,
+    defaults: RulesetDefault[],
+): { enable: string[]; disable: string[] } {
+    const forcedOn = new Set(settings.enabledRulesets);
+    const forcedOff = new Set(settings.disabledRulesets);
+
+    const enable: string[] = [];
+    const disable: string[] = [];
+
+    for (const ruleset of defaults) {
+        const on = forcedOn.has(ruleset.id)
+            || (ruleset.enabled && !forcedOff.has(ruleset.id));
+        (on ? enable : disable).push(ruleset.id);
+    }
+
+    return { enable, disable };
+}
+
+/**
+ * Whether the registered scripts need their exclusions rewritten.
+ *
+ * Re-applying identical exclusions to every registered script costs seconds
+ * (measured — docs/adr/0002) and changes nothing, so the worker skips it. The
+ * comparison is order-sensitive on purpose: reporting a difference that is only
+ * a reordering merely costs one needless update, whereas missing a real one
+ * would leave filtering on where the user turned it off. Only the harmless
+ * error is possible in that direction.
+ */
+export function exclusionsDiffer(applied: string[] | undefined, wanted: string[]): boolean {
+    if (applied === undefined) return true;
+    if (applied.length !== wanted.length) return true;
+    return applied.some((pattern, index) => pattern !== wanted[index]);
 }

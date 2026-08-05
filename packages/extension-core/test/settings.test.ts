@@ -5,9 +5,11 @@ import {
     buildAllowlistRules,
     buildCosmeticUserRules,
     buildExcludeMatches,
+    exclusionsDiffer,
     isSiteDisabled,
     normaliseHostname,
     parseUserFilter,
+    resolveRulesets,
     type Settings,
 } from '../src/settings.js';
 
@@ -125,5 +127,78 @@ describe('buildExcludeMatches', () => {
 
     it('produces nothing when no site is disabled', () => {
         expect(buildExcludeMatches(DEFAULT_SETTINGS)).toEqual([]);
+    });
+});
+
+describe('resolveRulesets', () => {
+    const declared = [
+        { id: 'ads', enabled: true },
+        { id: 'privacy', enabled: true },
+        { id: 'annoyances', enabled: false },
+    ];
+
+    it('follows the manifest when the user has chosen nothing', () => {
+        // The regression that mattered: a list shipping off must stay off,
+        // rather than being switched on for everyone by an empty settings file.
+        const { enable, disable } = resolveRulesets(DEFAULT_SETTINGS, declared);
+        expect(enable).toEqual(['ads', 'privacy']);
+        expect(disable).toEqual(['annoyances']);
+    });
+
+    it('honours a list the user turned off', () => {
+        const { enable, disable } = resolveRulesets(
+            settingsWith({ disabledRulesets: ['privacy'] }), declared,
+        );
+        expect(enable).toEqual(['ads']);
+        expect(disable).toEqual(['privacy', 'annoyances']);
+    });
+
+    it('honours a list the user turned on although it ships off', () => {
+        const { enable } = resolveRulesets(
+            settingsWith({ enabledRulesets: ['annoyances'] }), declared,
+        );
+        expect(enable).toContain('annoyances');
+    });
+
+    it('lets an explicit choice win over the default either way', () => {
+        const { enable, disable } = resolveRulesets(settingsWith({
+            enabledRulesets: ['annoyances'], disabledRulesets: ['ads'],
+        }), declared);
+        expect(enable).toEqual(['privacy', 'annoyances']);
+        expect(disable).toEqual(['ads']);
+    });
+
+    it('accounts for every declared ruleset exactly once', () => {
+        const { enable, disable } = resolveRulesets(DEFAULT_SETTINGS, declared);
+        expect([...enable, ...disable].sort()).toEqual(declared.map((r) => r.id).sort());
+    });
+});
+
+describe('exclusionsDiffer', () => {
+    it('treats never-applied as different', () => {
+        expect(exclusionsDiffer(undefined, [])).toBe(true);
+    });
+
+    it('reports no difference when they match', () => {
+        expect(exclusionsDiffer(['*://*.a.com/*'], ['*://*.a.com/*'])).toBe(false);
+        expect(exclusionsDiffer([], [])).toBe(false);
+    });
+
+    it('catches a site being added or removed', () => {
+        expect(exclusionsDiffer([], ['*://*.a.com/*'])).toBe(true);
+        expect(exclusionsDiffer(['*://*.a.com/*'], [])).toBe(true);
+    });
+
+    it('catches a site being swapped for another', () => {
+        // Same count, different content: missing this would leave scripts
+        // running on the site the user just turned off.
+        expect(exclusionsDiffer(['*://*.a.com/*'], ['*://*.b.com/*'])).toBe(true);
+    });
+
+    it('errs towards reapplying rather than skipping', () => {
+        // A reordering is reported as a difference. That costs one needless
+        // update; the opposite mistake would be a filtering bug.
+        expect(exclusionsDiffer(['*://*.a.com/*', '*://*.b.com/*'],
+            ['*://*.b.com/*', '*://*.a.com/*'])).toBe(true);
     });
 });
