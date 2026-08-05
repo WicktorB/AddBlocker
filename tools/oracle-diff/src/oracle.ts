@@ -87,6 +87,25 @@ function sample<T>(items: T[], count: number): T[] {
     return Array.from({ length: count }, (_, i) => items[Math.floor(i * step)]);
 }
 
+/**
+ * Maps `rulesetId:ruleId` to the action that rule takes.
+ *
+ * onRuleMatchedDebug reports which rule fired but not what it does, so we
+ * recover the action from the built rulesets.
+ */
+async function loadRuleActions(): Promise<Map<string, string>> {
+    const actions = new Map<string, string>();
+    for (const file of await readdir(join(BUILT, 'rules'))) {
+        const rulesetId = file.replace(/\.json$/, '');
+        const rules = JSON.parse(await readFile(join(BUILT, 'rules', file), 'utf8')) as Array<{
+            id: number;
+            action: { type: string };
+        }>;
+        for (const rule of rules) actions.set(`${rulesetId}:${rule.id}`, rule.action.type);
+    }
+    return actions;
+}
+
 async function loadCorpusDomains(): Promise<string[]> {
     const files = await readdir(join(BUILT, 'rules'));
     const domains = new Set<string>();
@@ -154,6 +173,10 @@ async function stageExtension(): Promise<string> {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.key = der.toString('base64');
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    // Extension page that stays open to collect onRuleMatchedDebug events.
+    await writeFile(join(STAGED, 'collector.html'),
+        '<!doctype html><meta charset="utf-8"><title>collector</title>', 'utf8');
 
     return [...digest].map((c) => String.fromCharCode(parseInt(c, 16) + 97)).join('');
 }
@@ -230,16 +253,34 @@ async function main(): Promise<void> {
 
     let ourVerdicts: boolean[] = [];
     try {
-        // Sanity: the extension must actually be live, or every request would
-        // "pass" and the comparison would be meaningless.
-        const check = await context.newPage();
-        await check.goto(`chrome-extension://${extensionId}/manifest.json`, { timeout: 60_000 });
-        await check.close();
+        const ruleActions = await loadRuleActions();
+
+        // Listen for rule matches from an extension page.
+        //
+        // A failed fetch is NOT proof of blocking: HSTS upgrades, TLS failures
+        // and plain network errors all throw the same way, and the browser's
+        // behaviour there varies by version. onRuleMatchedDebug reports what
+        // the extension actually did, which is the only sound measure.
+        // It requires declarativeNetRequestFeedback and an unpacked extension —
+        // both true here.
+        const listener = await context.newPage();
+        await listener.goto(`chrome-extension://${extensionId}/collector.html`, { timeout: 60_000 });
+        await listener.evaluate(() => {
+            const w = window as unknown as { __matches: Array<{ url: string; key: string }> };
+            w.__matches = [];
+            (globalThis as unknown as { chrome: typeof chrome }).chrome
+                .declarativeNetRequest.onRuleMatchedDebug.addListener((info) => {
+                    w.__matches.push({
+                        url: info.request.url,
+                        key: `${info.rule.rulesetId}:${info.rule.ruleId}`,
+                    });
+                });
+        });
 
         const page = await context.newPage();
         await page.goto(`http://${probes[0].initiator}:${port}/__runner`, { waitUntil: 'load' });
 
-        ourVerdicts = await page.evaluate(async (urls: string[]) => {
+        const fetchFailed = await page.evaluate(async (urls: string[]) => {
             const out: boolean[] = [];
             for (const url of urls) {
                 try {
@@ -251,6 +292,26 @@ async function main(): Promise<void> {
             }
             return out;
         }, probes.map((p) => p.url));
+
+        const matches = await listener.evaluate(
+            () => (window as unknown as { __matches: Array<{ url: string; key: string }> }).__matches,
+        );
+
+        // A probe counts as blocked only when a rule whose action is `block`
+        // fired for its URL.
+        const blockedUrls = new Set(
+            matches.filter((m) => ruleActions.get(m.key) === 'block').map((m) => m.url),
+        );
+        ourVerdicts = probes.map((p) => blockedUrls.has(p.url));
+
+        // Surface the gap between the two signals: a fetch that failed without
+        // a matching block rule is an environment artefact, not our doing.
+        const artefacts = probes.filter((p, i) => fetchFailed[i] && !blockedUrls.has(p.url));
+        if (artefacts.length > 0) {
+            console.log(`\nNote: ${artefacts.length} request(s) failed without any block rule firing ` +
+                '(HSTS upgrade, TLS or network error — not blocking):');
+            for (const p of artefacts.slice(0, 5)) console.log(`  ${p.url}`);
+        }
     } finally {
         await context.close();
         server.close();
