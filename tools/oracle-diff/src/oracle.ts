@@ -13,6 +13,7 @@
 
 import { createServer, type Server } from 'node:http';
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +24,18 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
 const STAGED = join(ROOT, 'dist', 'oracle-extension');
 const CACHE_DIR = join(ROOT, '.filter-cache');
-const CHROME = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+/**
+ * Where to find Chromium. This dev container ships one at a fixed path; CI
+ * installs its own through Playwright, which resolves it when we pass
+ * undefined.
+ */
+function resolveChromium(): string | undefined {
+    const explicit = process.env.CHROMIUM_PATH;
+    if (explicit !== undefined && explicit !== '') return explicit;
+
+    const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+    return existsSync(preinstalled) ? preinstalled : undefined;
+}
 
 /** How many domains to sample per category. Kept modest: each is a real fetch. */
 const SAMPLE_SIZE = Number(process.env.ORACLE_SAMPLE ?? 300);
@@ -189,7 +201,7 @@ async function main(): Promise<void> {
     await rm(profile, { recursive: true, force: true });
 
     const context = await chromium.launchPersistentContext(profile, {
-        executablePath: CHROME,
+        executablePath: resolveChromium(),
         headless: true,
         ignoreDefaultArgs: ['--disable-extensions'],
         timeout: 120_000,

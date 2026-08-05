@@ -8,6 +8,7 @@
 
 import { createServer, type Server } from 'node:http';
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,21 @@ import { chromium } from 'playwright-core';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
 const STAGED = join(ROOT, 'dist', 'verify-extension');
-const CHROME = process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+
+/**
+ * Where to find Chromium.
+ *
+ * This dev container ships one at a fixed path; CI installs its own through
+ * Playwright. Returning undefined lets Playwright resolve the browser it
+ * manages, which is the right answer everywhere else.
+ */
+function resolveChromium(): string | undefined {
+    const explicit = process.env.CHROMIUM_PATH;
+    if (explicit !== undefined && explicit !== '') return explicit;
+
+    const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+    return existsSync(preinstalled) ? preinstalled : undefined;
+}
 
 interface Probe {
     domain: string;
@@ -127,7 +142,7 @@ async function main(): Promise<void> {
 
     let failed = false;
     const context = await chromium.launchPersistentContext(profile, {
-        executablePath: CHROME,
+        executablePath: resolveChromium(),
         headless: true,
         // Playwright passes --disable-extensions by default, which silently
         // defeats --load-extension.

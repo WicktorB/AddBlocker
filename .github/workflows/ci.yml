@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` here on purpose — the action reads packageManager from
+      # package.json, and declaring it in both places is a hard error.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -30,8 +30,10 @@ jobs:
       - name: Build rulesets
         run: pnpm build
 
+      # We depend on playwright-core, whose CLI is named playwright-core —
+      # there is no `playwright` binary to exec.
       - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm --filter @addblocker/verify-extension exec playwright-core install --with-deps chromium
 
       # Chrome silently disables a whole ruleset containing one invalid rule.
       # Only a real browser catches that, so this check is blocking.
@@ -51,3 +53,4 @@ jobs:
             dist/extension/manifest.json
             dist/oracle-report.json
           retention-days: 7
+          if-no-files-found: ignore
