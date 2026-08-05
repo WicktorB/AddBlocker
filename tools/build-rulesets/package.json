@@ -12,7 +12,9 @@
     "@addblocker/cosmetic-compiler": "workspace:*",
     "@addblocker/cosmetic-runtime": "workspace:*",
     "@addblocker/scriptlet-compiler": "workspace:*",
-    "@addblocker/scriptlet-runtime": "workspace:*"
+    "@addblocker/scriptlet-runtime": "workspace:*",
+    "@addblocker/extension-core": "workspace:*",
+    "@addblocker/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

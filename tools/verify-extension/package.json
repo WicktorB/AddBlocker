@@ -6,7 +6,8 @@
   "scripts": {
     "verify": "tsx src/verify.ts",
     "cosmetic-check": "tsx src/cosmetic-check.ts",
-    "scriptlet-check": "tsx src/scriptlet-check.ts"
+    "scriptlet-check": "tsx src/scriptlet-check.ts",
+    "ui-check": "tsx src/ui-check.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

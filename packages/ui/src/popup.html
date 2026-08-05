@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>AddBlocker</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1a202c; --muted:#718096; --line:#e2e8f0; --accent:#2b6cb0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1a202c; --fg:#f7fafc; --muted:#a0aec0; --line:#2d3748; --accent:#63b3ed; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    width: 320px; margin: 0; padding: 14px;
+    font: 13px/1.45 system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  h1 { font-size: 14px; margin: 0 0 2px; }
+  .host { color: var(--muted); font-size: 12px; word-break: break-all; margin-bottom: 12px; }
+  .count { font-size: 28px; font-weight: 600; line-height: 1; }
+  .count-label { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+         padding: 9px 0; border-top: 1px solid var(--line); }
+  button {
+    font: inherit; padding: 7px 11px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--fg); width: 100%;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .switch { display: flex; align-items: center; gap: 8px; }
+  .status { font-size: 12px; color: var(--muted); min-height: 16px; margin-top: 8px; }
+  .off { color: #c05621; font-weight: 600; }
+  .links { display: flex; gap: 8px; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <h1>AddBlocker</h1>
+  <div class="host" id="host">…</div>
+
+  <div class="count" id="count">—</div>
+  <div class="count-label">requêtes bloquées sur cet onglet</div>
+
+  <div class="row">
+    <span class="switch">Filtrage sur ce site</span>
+    <button id="toggle" style="width:auto">…</button>
+  </div>
+
+  <div class="row">
+    <button id="pick">Masquer un élément…</button>
+  </div>
+
+  <div class="links">
+    <button id="options">Réglages</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

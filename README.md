@@ -3,7 +3,7 @@
 Ad‑blocker Chrome Manifest V3, conçu pour se rapprocher au maximum d'uBlock Origin
 maintenant que MV2 n'existe plus sur Chrome (retrait définitif du Web Store : 31 août 2026).
 
-**État : phases 1 à 3 terminées** — blocage réseau, filtrage cosmétique et scriptlets fonctionnent. Phase 4 (UI) à venir.
+**État : phases 1 à 4 terminées** — blocage réseau, cosmétique, scriptlets et interface fonctionnent. Reste la mesure de parité sur sites réels (phase 6).
 
 ## Démarrage
 
@@ -15,13 +15,17 @@ pnpm check     # tests + build + vérification navigateur + oracle différentiel
 
 Puis charger `dist/extension` via `chrome://extensions` → *Charger l'extension non empaquetée*.
 
+Au premier lancement, l'extension enregistre ses content scripts : compter environ
+10 secondes avant que le filtrage cosmétique soit actif. Ensuite c'est persistant.
+
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 158 tests unitaires (DNR, cosmétique, procédural, scriptlets) |
+| `pnpm test` | 209 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
 | `pnpm cosmetic-check` | Vérifie le masquage et l'absence de flash |
 | `pnpm scriptlet-check` | Vérifie les scriptlets dans le monde de la page |
+| `pnpm ui-check` | Vérifie les flux utilisateur de bout en bout |
 | `pnpm oracle` | Compare nos décisions à `@adguard/tsurlfilter` |
 
 ## Où ça en est
@@ -31,7 +35,7 @@ Puis charger `dist/extension` via `chrome://extensions` → *Charger l'extension
 | Blocage réseau | ✅ 13 022 règles, 0,40 % de filtres perdus, 98,4 % d'accord avec l'oracle |
 | Filtrage cosmétique | ✅ 22 113 domaines, 56 100 sélecteurs, sans flash |
 | Scriptlets | ✅ 61 805 invocations, 99,5 % du catalogue couvert |
-| UI (popup, options, picker) | ⏳ phase 4 |
+| UI (popup, options, picker) | ✅ bascule par site en ~150 ms, filtres utilisateur, picker |
 
 ## Documentation
 

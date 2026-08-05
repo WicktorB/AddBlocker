@@ -17,6 +17,7 @@ import { compile, validateRuleset } from '@addblocker/dnr-compiler';
 import { QUOTAS, RULESETS, type Ruleset } from './catalog.js';
 import { buildCosmetic, type ContentScriptEntry } from './cosmetic.js';
 import { buildScriptlets } from './scriptlets.js';
+import { buildUi } from './ui.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const CACHE_DIR = join(ROOT, '.filter-cache');
@@ -133,6 +134,8 @@ function writeManifest(built: BuiltRuleset[], contentScripts: ContentScriptEntry
             'declarativeNetRequestFeedback',
             'storage',
             'scripting',
+            'tabs',
+            'webNavigation',
         ],
         host_permissions: ['<all_urls>'],
         background: { service_worker: 'sw.js' },
@@ -144,6 +147,19 @@ function writeManifest(built: BuiltRuleset[], contentScripts: ContentScriptEntry
             })),
         },
         content_scripts: contentScripts,
+        action: {
+            default_popup: 'popup.html',
+            default_title: 'AddBlocker',
+        },
+        options_ui: {
+            page: 'options.html',
+            open_in_tab: true,
+        },
+        // Injected on demand by the popup, so it must be reachable.
+        web_accessible_resources: [{
+            resources: ['picker.js'],
+            matches: ['<all_urls>'],
+        }],
     };
 
     return writeFile(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
@@ -204,8 +220,12 @@ async function main(): Promise<void> {
         'utf8',
     );
 
+    console.log('\nBuilding UI');
+    const ui = await buildUi(OUT_DIR);
+    console.log(`  service worker ${(ui.workerBytes / 1024).toFixed(0)}kB, ` +
+        `${ui.assets.length} assets (popup, options, picker)`);
+
     await writeManifest(built, cosmetic.contentScripts);
-    await cp(join(dirname(fileURLToPath(import.meta.url)), 'sw.js'), join(OUT_DIR, 'sw.js'));
 
     const enabled = built.filter((b) => b.ruleset.enabledByDefault);
     const enabledRules = enabled.reduce((n, b) => n + b.ruleCount, 0);

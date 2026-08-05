@@ -41,6 +41,12 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
 
+  packages/extension-core:
+    devDependencies:
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
+
   packages/filter-parser:
     devDependencies:
       vitest:
@@ -63,6 +69,8 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)
 
+  packages/ui: {}
+
   tools/build-rulesets:
     dependencies:
       '@addblocker/cosmetic-compiler':
@@ -74,6 +82,9 @@ importers:
       '@addblocker/dnr-compiler':
         specifier: workspace:*
         version: link:../../packages/dnr-compiler
+      '@addblocker/extension-core':
+        specifier: workspace:*
+        version: link:../../packages/extension-core
       '@addblocker/filter-parser':
         specifier: workspace:*
         version: link:../../packages/filter-parser
@@ -83,6 +94,9 @@ importers:
       '@addblocker/scriptlet-runtime':
         specifier: workspace:*
         version: link:../../packages/scriptlet-runtime
+      '@addblocker/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

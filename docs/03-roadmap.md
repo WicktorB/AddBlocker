@@ -147,11 +147,45 @@ Le critère initial disait « YouTube sans pré-roll, Twitch et 3 sites à anti-
 
 Cela prouve que le mécanisme fonctionne (`aopr` lève bien, `set` force bien la valeur, le cookie est bien posé avant que la page ne le lise). Cela ne prouve pas que YouTube est débloqué aujourd'hui — cette vérification reste à faire sur une machine avec un accès réseau normal.
 
-## Phase 4 — UI et contrôle utilisateur (3 semaines)
+## Phase 4 — UI et contrôle utilisateur ✅ terminée
 
-Popup (bascule par site, modes, compteur), page d'options (listes, filtres utilisateur), element picker, logger de requêtes.
+> **Critère de sortie atteint** : un utilisateur peut débloquer un site cassé et créer un filtre sans quitter le navigateur — vérifié de bout en bout dans Chromium, en observant le comportement de la page, pas seulement l'état stocké.
 
-> **Critère de sortie** : un utilisateur peut débloquer un site cassé et créer un filtre sans quitter le navigateur.
+### Ce qui a été livré
+
+| Composant | Rôle |
+|---|---|
+| `packages/extension-core` | Réglages, règles dérivées, service worker |
+| `packages/ui` | Popup, page d'options, element picker |
+| `tools/verify-extension` (`ui-check`) | Pilote les flux utilisateur dans Chromium |
+
+- **Popup** : compteur de blocages de l'onglet, bascule par site, accès au picker.
+- **Options** : activation des listes, sites désactivés, éditeur de filtres.
+- **Picker** : surligne l'élément survolé, construit le sélecteur le plus durable possible et **annonce sa solidité avant validation**.
+
+209 tests unitaires.
+
+### La mesure qui a dicté la conception
+
+Désactiver un site touche deux mécanismes. Mesuré dans Chromium :
+
+| Opération | Coût |
+|---|---|
+| Règle DNR dynamique (`allowAllRequests`) | **5 ms** |
+| `updateContentScripts` (144 scripts) | **jusqu'à 15 s** |
+| Enregistrement initial des 144 buckets | ~9 s, une seule fois |
+
+La réponse à l'utilisateur ne peut donc pas attendre les content scripts. Le service worker applique d'abord le chemin rapide (DNR + rulesets) puis lance la synchronisation des scripts **en arrière-plan**. Résultat mesuré : `toggleSite` répond en ~150 ms, et le rechargement de page qui suit voit déjà le site débloqué — ce qui est précisément ce que l'utilisateur attend d'un site cassé.
+
+### Choix notables
+
+- **La règle d'allowlist a la priorité 100 000**, au-dessus de toutes les bandes statiques, y compris les blocages `$important` à 3 000+. « Désactivé ici » doit vouloir dire désactivé, quoi que disent les listes.
+- **`allowAllRequests` plutôt que `allow`** : une exception sur le seul document laisserait les sous-requêtes bloquées, ce qui ne réparerait pas le site.
+- **Le picker note la fragilité du sélecteur.** Un filtre ancré sur une classe générée comme `css-1x7ab3` cessera de fonctionner au prochain déploiement du site ; l'utilisateur doit le savoir au moment où il le crée, pas des semaines plus tard.
+
+### Un bug attrapé par les tests
+
+Le détecteur de classes générées ratait `css-1x7ab3` — le format d'emotion, l'un des plus répandus — parce que le motif n'acceptait que de l'hexadécimal, or `x` n'en fait pas partie. Corrigé, avec des cas de non-régression sur les faux positifs : sur-signaler une classe *significative* est le pire des deux, puisque cela pousse le picker vers un sélecteur positionnel, strictement plus fragile.
 
 ## Phase 5 — Rafraîchissement des listes (1 semaine)
 

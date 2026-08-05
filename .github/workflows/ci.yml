@@ -49,6 +49,10 @@ jobs:
       - name: Verify scriptlets
         run: pnpm scriptlet-check
 
+      # The user-facing flows: unblock a broken site, create a filter.
+      - name: Verify UI flows
+        run: pnpm ui-check
+
       # Compares our decisions against tsurlfilter's. Fails on over-blocking
       # or on any divergence we cannot explain.
       - name: Differential oracle

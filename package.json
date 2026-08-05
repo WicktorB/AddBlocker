@@ -9,9 +9,10 @@
     "verify": "pnpm --filter @addblocker/verify-extension run verify",
     "oracle": "pnpm --filter @addblocker/oracle-diff run oracle",
     "bench": "pnpm --filter @addblocker/phase0-bench run bench",
-    "check": "pnpm test && pnpm build && pnpm verify && pnpm cosmetic-check && pnpm scriptlet-check && pnpm oracle",
+    "check": "pnpm test && pnpm build && pnpm verify && pnpm cosmetic-check && pnpm scriptlet-check && pnpm ui-check && pnpm oracle",
     "cosmetic-check": "pnpm --filter @addblocker/verify-extension run cosmetic-check",
-    "scriptlet-check": "pnpm --filter @addblocker/verify-extension run scriptlet-check"
+    "scriptlet-check": "pnpm --filter @addblocker/verify-extension run scriptlet-check",
+    "ui-check": "pnpm --filter @addblocker/verify-extension run ui-check"
   },
   "devDependencies": {
     "vitest": "^3.2.7"
