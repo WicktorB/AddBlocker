@@ -37,7 +37,40 @@ async function load() {
     }
 
     renderSites();
+    renderKilled();
     $('filters').value = settings.userFilters.join('\n');
+}
+
+/**
+ * Lists neutralised rules so they can be put back.
+ *
+ * This is the only place they can be: a disabled rule never matches anything,
+ * so it never appears again in the popup's list of what fired on the page.
+ * Without this section a kill would be irreversible short of editing storage.
+ */
+function renderKilled() {
+    const killed = settings.killedRules ?? [];
+    if (killed.length === 0) {
+        $('killed').innerHTML = '<p class="empty">Aucune règle neutralisée.</p>';
+        return;
+    }
+    const list = document.createElement('ul');
+    for (const rule of killed) {
+        const item = document.createElement('li');
+        const label = document.createElement('code');
+        label.textContent = `${rule.rulesetId} #${rule.ruleId}`;
+        const restore = document.createElement('button');
+        restore.textContent = 'Rétablir';
+        restore.addEventListener('click', async () => {
+            restore.disabled = true;
+            await chrome.runtime.sendMessage({ type: 'restoreRule', payload: rule });
+            await load();
+        });
+        item.append(label, restore);
+        list.append(item);
+    }
+    $('killed').innerHTML = '';
+    $('killed').append(list);
 }
 
 function renderSites() {

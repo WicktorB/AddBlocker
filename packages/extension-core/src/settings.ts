@@ -15,6 +15,20 @@ export interface Settings {
     disabledRulesets: string[];
     /** Ruleset ids the user turned on although they ship off. */
     enabledRulesets: string[];
+    /** Individual static rules neutralised because they broke something. */
+    killedRules: KilledRule[];
+}
+
+/**
+ * One neutralised static rule.
+ *
+ * A rule id is only meaningful inside its ruleset, so both are needed — and
+ * both change when the lists are rebuilt, which is why the kill switch is for
+ * getting a site working again now, not a permanent preference.
+ */
+export interface KilledRule {
+    rulesetId: string;
+    ruleId: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
     userFilters: [],
     disabledRulesets: [],
     enabledRulesets: [],
+    killedRules: [],
 };
 
 /**
@@ -160,6 +175,60 @@ export function buildCosmeticUserRules(settings: Settings): CosmeticUserRules {
 /** Match patterns for the sites where content scripts must not run. */
 export function buildExcludeMatches(settings: Settings): string[] {
     return settings.disabledSites.map((domain) => `*://*.${domain}/*`);
+}
+
+/** Stable identity for a killed rule, for de-duplication and comparison. */
+export function killKey(rule: KilledRule): string {
+    return `${rule.rulesetId}#${String(rule.ruleId)}`;
+}
+
+export interface StaticRuleChange {
+    rulesetId: string;
+    disableRuleIds: number[];
+    enableRuleIds: number[];
+}
+
+/**
+ * Works out the `updateStaticRules` calls needed to match the settings.
+ *
+ * Chrome keeps the disabled set per ruleset with no way to read it back here,
+ * so what was applied last time is remembered and diffed. A rule the user
+ * restored has to be named explicitly in `enableRuleIds` — dropping it from the
+ * kill list is not enough, and forgetting that would leave rules disabled with
+ * nothing in the interface admitting it.
+ *
+ * Current kills are re-asserted even when unchanged. Whether the disabled set
+ * survives a browser restart is not documented; re-asserting costs one cheap
+ * call, while trusting persistence would risk a killed rule silently returning.
+ */
+export function planStaticRuleChanges(
+    killed: KilledRule[],
+    previouslyKilled: KilledRule[],
+): StaticRuleChange[] {
+    const byRuleset = new Map<string, { disable: Set<number>; enable: Set<number> }>();
+    const bucket = (rulesetId: string) => {
+        let found = byRuleset.get(rulesetId);
+        if (found === undefined) {
+            found = { disable: new Set(), enable: new Set() };
+            byRuleset.set(rulesetId, found);
+        }
+        return found;
+    };
+
+    for (const rule of killed) bucket(rule.rulesetId).disable.add(rule.ruleId);
+
+    const stillKilled = new Set(killed.map(killKey));
+    for (const rule of previouslyKilled) {
+        if (!stillKilled.has(killKey(rule))) bucket(rule.rulesetId).enable.add(rule.ruleId);
+    }
+
+    return [...byRuleset.entries()]
+        .map(([rulesetId, sets]) => ({
+            rulesetId,
+            disableRuleIds: [...sets.disable],
+            enableRuleIds: [...sets.enable],
+        }))
+        .filter((change) => change.disableRuleIds.length > 0 || change.enableRuleIds.length > 0);
 }
 
 /** A ruleset as the manifest declares it. */

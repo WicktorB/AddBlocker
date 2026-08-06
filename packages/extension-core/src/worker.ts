@@ -17,9 +17,12 @@ import {
     buildCosmeticUserRules,
     buildExcludeMatches,
     exclusionsDiffer,
+    killKey,
     normaliseHostname,
     parseUserFilter,
+    planStaticRuleChanges,
     resolveRulesets,
+    type KilledRule,
     type Settings,
 } from './settings.js';
 
@@ -27,6 +30,8 @@ const REGISTRATIONS_URL = 'cosmetic/registrations.json';
 const SETTINGS_KEY = 'settings';
 /** Exclusions last written to the registered scripts, to avoid rewriting them. */
 const APPLIED_EXCLUSIONS_KEY = 'appliedExcludeMatches';
+/** Kills last applied, so restoring a rule can name it explicitly. */
+const APPLIED_KILLS_KEY = 'appliedKilledRules';
 
 declare const chrome: typeof globalThis extends { chrome: infer C } ? C : any;
 
@@ -173,11 +178,45 @@ async function syncRulesets(settings: Settings): Promise<void> {
  * Disabling a site therefore rides on the DNR allowlist, which is also the part
  * that matters: it is what makes a broken site work again on reload.
  */
+/**
+ * Neutralises the individual static rules the user killed.
+ *
+ * This is the repair path for the case the site allowlist is too blunt for: one
+ * rule in a list of tens of thousands breaks one site, and turning filtering
+ * off for the whole site — or the whole list — gives up far more than needed.
+ */
+async function syncKilledRules(settings: Settings): Promise<void> {
+    const killed = settings.killedRules;
+    const stored = await chrome.storage.local.get(APPLIED_KILLS_KEY);
+    const previous = (stored[APPLIED_KILLS_KEY] ?? []) as KilledRule[];
+
+    const changes = planStaticRuleChanges(killed, previous);
+    if (changes.length === 0) return;
+
+    for (const change of changes) {
+        try {
+            await chrome.declarativeNetRequest.updateStaticRules({
+                rulesetId: change.rulesetId,
+                disableRuleIds: change.disableRuleIds,
+                enableRuleIds: change.enableRuleIds,
+            });
+        } catch (err) {
+            // A rebuilt list renumbers its rules, so an id from a previous
+            // build can be gone. Losing the kill is the right failure: the rule
+            // it referred to no longer exists.
+            console.error(`[addblocker] cannot update static rules of ${change.rulesetId}:`, err);
+        }
+    }
+
+    await chrome.storage.local.set({ [APPLIED_KILLS_KEY]: killed });
+}
+
 async function applyFastSettings(settings: Settings): Promise<void> {
     await Promise.all([
         syncDynamicRules(settings),
         syncRulesets(settings),
         syncUserCosmetic(settings),
+        syncKilledRules(settings),
     ]);
 }
 
@@ -229,28 +268,72 @@ export async function applySettingsFully(): Promise<void> {
  */
 const counts = new Map<number, number>();
 
+/** What a rule did on a tab, so the user can judge it before killing it. */
+export interface MatchedRuleTally {
+    rulesetId: string;
+    ruleId: number;
+    count: number;
+    /** One URL it blocked — a rule id alone tells the user nothing. */
+    sampleUrl: string;
+}
+
+const matched = new Map<number, Map<string, MatchedRuleTally>>();
+
+/** Enough to diagnose a broken page, bounded so a busy tab cannot grow forever. */
+const MAX_TRACKED_RULES_PER_TAB = 100;
+
 function trackMatches(): void {
     if (chrome.declarativeNetRequest.onRuleMatchedDebug === undefined) return;
 
     chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((info: {
-        request: { tabId: number };
+        request: { tabId: number; url: string };
+        rule: { rulesetId: string; ruleId: number };
     }) => {
         const tabId = info.request.tabId;
         if (tabId < 0) return;
+
         const next = (counts.get(tabId) ?? 0) + 1;
         counts.set(tabId, next);
         void chrome.action.setBadgeText({ tabId, text: next > 999 ? '999+' : String(next) });
         void chrome.action.setBadgeBackgroundColor({ tabId, color: '#4a5568' });
+
+        let perTab = matched.get(tabId);
+        if (perTab === undefined) {
+            perTab = new Map();
+            matched.set(tabId, perTab);
+        }
+        const key = killKey(info.rule);
+        const seen = perTab.get(key);
+        if (seen !== undefined) {
+            seen.count += 1;
+        } else if (perTab.size < MAX_TRACKED_RULES_PER_TAB) {
+            perTab.set(key, {
+                rulesetId: info.rule.rulesetId,
+                ruleId: info.rule.ruleId,
+                count: 1,
+                sampleUrl: info.request.url,
+            });
+        }
     });
 
-    chrome.tabs.onRemoved.addListener((tabId: number) => { counts.delete(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId: number) => {
+        counts.delete(tabId);
+        matched.delete(tabId);
+    });
     chrome.webNavigation?.onCommitted.addListener((details: { tabId: number; frameId: number }) => {
-        if (details.frameId === 0) counts.set(details.tabId, 0);
+        if (details.frameId !== 0) return;
+        counts.set(details.tabId, 0);
+        matched.delete(details.tabId);
     });
 }
 
 export function getCount(tabId: number): number {
     return counts.get(tabId) ?? 0;
+}
+
+/** Rules that fired on a tab, busiest first. */
+export function getMatchedRules(tabId: number): MatchedRuleTally[] {
+    return [...(matched.get(tabId)?.values() ?? [])].sort((a, b) => b.count - a.count);
 }
 
 // Message handling for the popup, options page and picker.
@@ -284,6 +367,32 @@ chrome.runtime.onMessage.addListener((message: { type: string; payload?: unknown
                 await saveSettings(settings);
                 await applySettings();
                 sendResponse({ ok: true, disabled: !disabled });
+                return;
+            }
+            case 'getMatchedRules': {
+                const { tabId } = message.payload as { tabId: number };
+                const settings = await loadSettings();
+                const killed = new Set(settings.killedRules.map(killKey));
+                sendResponse({
+                    rules: getMatchedRules(tabId),
+                    killed: settings.killedRules,
+                    // So the popup can show a rule already killed as such
+                    // rather than offering to kill it twice.
+                    isKilled: getMatchedRules(tabId).map((r) => killed.has(killKey(r))),
+                });
+                return;
+            }
+            case 'killRule':
+            case 'restoreRule': {
+                const rule = message.payload as KilledRule;
+                const settings = await loadSettings();
+                const key = killKey(rule);
+                settings.killedRules = message.type === 'killRule'
+                    ? [...settings.killedRules.filter((r) => killKey(r) !== key), rule]
+                    : settings.killedRules.filter((r) => killKey(r) !== key);
+                await saveSettings(settings);
+                await applySettings();
+                sendResponse({ ok: true, killedRules: settings.killedRules });
                 return;
             }
             case 'addFilter': {

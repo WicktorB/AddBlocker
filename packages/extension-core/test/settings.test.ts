@@ -9,6 +9,7 @@ import {
     isSiteDisabled,
     normaliseHostname,
     parseUserFilter,
+    planStaticRuleChanges,
     resolveRulesets,
     type Settings,
 } from '../src/settings.js';
@@ -127,6 +128,57 @@ describe('buildExcludeMatches', () => {
 
     it('produces nothing when no site is disabled', () => {
         expect(buildExcludeMatches(DEFAULT_SETTINGS)).toEqual([]);
+    });
+});
+
+describe('planStaticRuleChanges', () => {
+    const ads = { rulesetId: 'ads', ruleId: 12 };
+    const privacy = { rulesetId: 'privacy', ruleId: 7 };
+
+    it('disables a newly killed rule', () => {
+        expect(planStaticRuleChanges([ads], [])).toEqual([
+            { rulesetId: 'ads', disableRuleIds: [12], enableRuleIds: [] },
+        ]);
+    });
+
+    it('re-enables a rule the user restored', () => {
+        // Dropping it from the kill list is not enough: Chrome keeps it
+        // disabled until it is named, and the interface would then be lying.
+        expect(planStaticRuleChanges([], [ads])).toEqual([
+            { rulesetId: 'ads', disableRuleIds: [], enableRuleIds: [12] },
+        ]);
+    });
+
+    it('groups by ruleset, since ids are only unique within one', () => {
+        const changes = planStaticRuleChanges([ads, privacy], []);
+        expect(changes).toHaveLength(2);
+        expect(changes.map((c) => c.rulesetId).sort()).toEqual(['ads', 'privacy']);
+    });
+
+    it('handles a kill and a restore in different rulesets at once', () => {
+        const changes = planStaticRuleChanges([ads], [privacy]);
+        expect(changes).toContainEqual({ rulesetId: 'ads', disableRuleIds: [12], enableRuleIds: [] });
+        expect(changes).toContainEqual({ rulesetId: 'privacy', disableRuleIds: [], enableRuleIds: [7] });
+    });
+
+    it('re-asserts a kill that was already applied', () => {
+        // Whether Chrome keeps the disabled set across restarts is not
+        // documented, and the worker replays this on every start. Re-asserting
+        // costs one cheap call; relying on persistence would risk a killed
+        // rule quietly coming back.
+        expect(planStaticRuleChanges([ads], [ads])).toEqual([
+            { rulesetId: 'ads', disableRuleIds: [12], enableRuleIds: [] },
+        ]);
+    });
+
+    it('asks for nothing when there is nothing to assert', () => {
+        expect(planStaticRuleChanges([], [])).toEqual([]);
+    });
+
+    it('does not repeat a rule killed twice', () => {
+        expect(planStaticRuleChanges([ads, ads], [])).toEqual([
+            { rulesetId: 'ads', disableRuleIds: [12], enableRuleIds: [] },
+        ]);
     });
 });
 

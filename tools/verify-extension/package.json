@@ -7,7 +7,9 @@
     "verify": "tsx src/verify.ts",
     "cosmetic-check": "tsx src/cosmetic-check.ts",
     "scriptlet-check": "tsx src/scriptlet-check.ts",
-    "ui-check": "tsx src/ui-check.ts"
+    "ui-check": "tsx src/ui-check.ts",
+    "reload-check": "tsx src/reload-check.ts",
+    "kill-check": "tsx src/kill-check.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

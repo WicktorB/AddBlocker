@@ -195,14 +195,38 @@ Les 7,5 s ne dépendent pas de ce qu'on ajoute mais de ce qui est **déjà** enr
 
 Le détecteur de classes générées ratait `css-1x7ab3` — le format d'emotion, l'un des plus répandus — parce que le motif n'acceptait que de l'hexadécimal, or `x` n'en fait pas partie. Corrigé, avec des cas de non-régression sur les faux positifs : sur-signaler une classe *significative* est le pire des deux, puisque cela pousse le picker vers un sélecteur positionnel, strictement plus fragile.
 
-## Phase 5 — Rafraîchissement des listes (1 semaine)
-
-En usage personnel, pas de CDN à opérer ni de revue à subir : un script de rebuild local suffit.
-
-- Rebuild déclenché à la main ou par tâche planifiée : re-télécharge les listes, recompile, recharge l'extension.
-- Kill switch en règles dynamiques pour neutraliser une règle qui casse un site, sans rebuild complet.
+## Phase 5 — Rafraîchissement des listes ✅
 
 > **Critère de sortie** : `pnpm update-filters` régénère et recharge en moins d'une minute.
+> **Atteint** — 4,1 s avec des listes modifiées en amont, 0,2 s quand rien n'a bougé.
+
+| Cas | Mesuré |
+|---|---|
+| 22 listes vérifiées, 9 modifiées en amont → rebuild | **4,1 s** |
+| 22 listes vérifiées, aucune modifiée → rien à faire | **0,2 s** |
+| Rebuild forcé sans changement amont | 2,5 s |
+
+Les requêtes sont conditionnelles (`If-None-Match` / `If-Modified-Since`) : vérifier 22 listes inchangées coûte 183 ms de 304, et rien n'est recompilé si rien n'a bougé. Une liste injoignable conserve sa copie en cache — une panne amont ne doit pas réduire silencieusement la protection.
+
+Le rapport compte les **domaines** en plus des règles. La fusion par `requestDomains` fait qu'une liste peut grossir de milliers d'entrées sans que le nombre de règles bouge : ne montrer que les règles ferait passer une vraie mise à jour pour un non-événement.
+
+### Le rechargement, et le piège du mode de chargement
+
+Recharger l'extension depuis un script passe par le protocole DevTools. La vérification de ce chemin a d'abord échoué pour une raison instructive : une extension chargée par `--load-extension` **disparaît définitivement** après `chrome.runtime.reload()` — le drapeau la charge une fois et rien ne la réinstalle. Testée ainsi, la mécanique aurait été déclarée cassée alors qu'elle fonctionne.
+
+Le harnais installe donc l'extension via `Extensions.loadUnpacked` (CDP), c'est-à-dire comme le bouton « Charger l'extension non empaquetée » — la configuration réelle de l'utilisateur. Le test modifie les règles sur disque, vérifie que **rien ne change avant le rechargement**, recharge, puis vérifie que les nouvelles règles s'appliquent.
+
+Si aucun Chrome n'écoute sur le port de debug, la mise à jour réussit quand même et le script indique l'étape manuelle. Le rechargement est le seul maillon qui dépend de l'environnement ; le faire échouer bruyamment serait disproportionné.
+
+### Kill switch par règle
+
+`updateStaticRules()` neutralise une règle statique précise, sans toucher au reste. C'est la réparation fine que l'allowlist par site ne sait pas faire : quand une règle sur des dizaines de milliers casse un détail, couper tout le site — ou toute la liste — abandonne beaucoup trop.
+
+Le popup liste les règles qui ont réellement bloqué quelque chose sur l'onglet, avec le domaine concerné : un identifiant de règle seul ne dit rien à personne. Vérifié en Chromium : la règle neutralisée cesse de bloquer, **toutes les autres continuent**, et le rétablissement re-bloque.
+
+Une règle neutralisée ne se déclenchant plus, elle ne peut pas reparaître dans la liste du popup — le rétablissement vit donc dans les réglages, sans quoi la neutralisation serait irréversible.
+
+Limite assumée : les identifiants de règles sont renumérotés à chaque rebuild, donc une neutralisation ne survit pas à `update-filters`. C'est un dépannage immédiat, pas une préférence durable, et l'interface le dit.
 
 ## Phase 6 — Mesure de parité (2 semaines)
 

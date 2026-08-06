@@ -20,12 +20,15 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 219 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
+| `pnpm test` | 226 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
+| `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
 | `pnpm cosmetic-check` | Vérifie le masquage et l'absence de flash |
 | `pnpm scriptlet-check` | Vérifie les scriptlets dans le monde de la page |
 | `pnpm ui-check` | Vérifie les flux utilisateur de bout en bout |
+| `pnpm kill-check` | Vérifie la neutralisation d'une règle précise |
+| `pnpm reload-check` | Vérifie que le rebuild est bien pris en compte |
 | `pnpm oracle` | Compare nos décisions à `@adguard/tsurlfilter` |
 
 ## Où ça en est
