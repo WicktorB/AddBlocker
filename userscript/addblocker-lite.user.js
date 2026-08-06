@@ -9,8 +9,8 @@
 // @grant        none
 // @inject-into  page
 // @noframes     false
-// @downloadURL  https://raw.githubusercontent.com/WicktorB/AddBlocker/claude/chrome-adblocker-architecture-sqpbbx/userscript/addblocker-lite.user.js
-// @updateURL    https://raw.githubusercontent.com/WicktorB/AddBlocker/claude/chrome-adblocker-architecture-sqpbbx/userscript/addblocker-lite.user.js
+// @downloadURL  https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker-lite.user.js
+// @updateURL    https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker-lite.user.js
 // ==/UserScript==
 
 /*

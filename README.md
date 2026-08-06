@@ -73,7 +73,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 ## Sur mobile et dans les navigateurs sans extension
 
-`userscript/addblocker.user.js` (2,0 Mo) s'installe dans **Tampermonkey**, **Violentmonkey** ou **Userscripts** (Safari iOS). `userscript/addblocker-lite.user.js` (290 ko) ne contient que les règles génériques, pour les appareils où la taille compte.
+[`userscript/addblocker.user.js`](https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker.user.js) (2,0 Mo) s'installe dans **Tampermonkey**, **Violentmonkey** ou **Userscripts** (Safari iOS). [`userscript/addblocker-lite.user.js`](https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker-lite.user.js) (290 ko) ne contient que les règles génériques, pour les appareils où la taille compte.
 
 **Ce qu'il ne fait pas : bloquer le réseau.** Aucun gestionnaire de userscripts n'expose l'équivalent de `declarativeNetRequest` — les publicités sont téléchargées puis masquées. La page n'est pas allégée, seulement nettoyée. Deux des trois moteurs sont là (cosmétique et scriptlets), le troisième est structurellement hors d'atteinte.
 

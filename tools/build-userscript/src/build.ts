@@ -37,8 +37,12 @@ const COSMETIC_RUNTIME = join(ROOT, 'packages', 'cosmetic-runtime', 'src', 'appl
 const SCRIPTLET_RUNTIME = join(ROOT, 'packages', 'scriptlet-runtime', 'src', 'run.ts');
 
 const VERSION = '1.0.0';
+// Points at main, not at a feature branch: this URL is baked into every
+// installed copy as @updateURL, and a branch deleted after merging would make
+// updates stop without a word — the worst way to fail, since the user would go
+// on believing their lists are current.
 const REPO = 'https://raw.githubusercontent.com/WicktorB/AddBlocker'
-    + '/claude/chrome-adblocker-architecture-sqpbbx/userscript';
+    + '/main/userscript';
 
 /** Separates the parts of a pooled entry; never appears in a selector. */
 const UNIT = '';
