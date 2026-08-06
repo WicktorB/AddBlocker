@@ -3,7 +3,9 @@
 Ad‑blocker Chrome Manifest V3, conçu pour se rapprocher au maximum d'uBlock Origin
 maintenant que MV2 n'existe plus sur Chrome (retrait définitif du Web Store : 31 août 2026).
 
-**État : phases 1 à 4 terminées** — blocage réseau, cosmétique, scriptlets et interface fonctionnent. Reste la mesure de parité sur sites réels (phase 6).
+**État : phases 1 à 6 terminées** — blocage réseau, cosmétique, scriptlets, interface, mise à jour des listes et mesure de parité.
+
+La parité atteint **100 % du taux de blocage d'uBlock Origin, 0 % de sur-blocage**, mesurée contre son propre moteur (`@gorhill/ubo-core`) sur 5 200 requêtes. Une réserve importante : ce corpus est **synthétique**. Il mesure la fidélité de la traduction des filtres, pas le comportement sur une vraie page. La mesure sur sites réels s'obtient avec `pnpm parity-sites`, qui demande un accès au web ouvert.
 
 ## Démarrage
 
