@@ -55,6 +55,7 @@ export function emptyOptions(): FilterOptions {
         matchCase: false,
         popup: false,
         redirect: null,
+        redirectRuleOnly: false,
         removeParam: null,
         csp: null,
         cosmeticScope: [],
@@ -168,8 +169,13 @@ export function parseOptions(optionText: string): FilterOptions {
                 options.matchCase = true;
                 break;
             // `$rewrite=` is ABP's spelling of uBO's `$redirect=`.
-            case 'redirect': case 'redirect-rule': case 'rewrite':
+            case 'redirect': case 'rewrite':
                 options.redirect = value.replace(/^abp-resource:/, '');
+                break;
+            // Same syntax, different meaning — see types.ts.
+            case 'redirect-rule':
+                options.redirect = value.replace(/^abp-resource:/, '');
+                options.redirectRuleOnly = true;
                 break;
             case 'removeparam': case 'queryprune':
                 options.removeParam = value;

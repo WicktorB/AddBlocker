@@ -120,6 +120,14 @@ describe('options', () => {
         expect(parse('||x.com^$redirect=noopjs').options.redirect).toBe('noopjs');
     });
 
+    it('tells $redirect-rule apart from $redirect', () => {
+        // They differ in kind, not degree: $redirect blocks and substitutes,
+        // $redirect-rule only substitutes for requests already blocked.
+        expect(parse('||x.com^$redirect=noopjs').options.redirectRuleOnly).toBe(false);
+        expect(parse('||x.com^$redirect-rule=noopjs').options.redirectRuleOnly).toBe(true);
+        expect(parse('||x.com^$redirect-rule=noopjs').options.redirect).toBe('noopjs');
+    });
+
     it('separates cosmetic-scoped options from unsupported ones', () => {
         const o = parse('@@||x.com^$elemhide,generichide').options;
         expect(o.cosmeticScope).toEqual(['elemhide', 'generichide']);

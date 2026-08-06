@@ -123,6 +123,21 @@ importers:
         specifier: ^4.19.2
         version: 4.23.5
 
+  tools/parity:
+    devDependencies:
+      '@gorhill/ubo-core':
+        specifier: ^0.1.30
+        version: 0.1.30
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      playwright-core:
+        specifier: ^1.49.0
+        version: 1.62.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.5
+
   tools/phase0-bench:
     dependencies:
       '@addblocker/dnr-compiler':
@@ -511,6 +526,10 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@gorhill/ubo-core@0.1.30':
+    resolution: {integrity: sha512-0QtDqjP7r7bQbiLO67ojEYkoaOyWeYy6heCOfkpygUfpYf/+iRfgM+ceCXSOsPXpNLgZg3aKqlD4LTxBw6WjNw==}
+    engines: {node: '>=18.0.0', npm: '>=6.14.4'}
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -1289,6 +1308,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
+
+  '@gorhill/ubo-core@0.1.30': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 

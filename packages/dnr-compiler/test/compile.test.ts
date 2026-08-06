@@ -82,6 +82,21 @@ describe('translation', () => {
     it('points $redirect at a bundled resource', () => {
         expect(ruleFor('||x.com^$redirect=noopjs').action.redirect?.extensionPath).toBe('/redirects/noopjs');
     });
+
+    it('emits nothing for $redirect-rule, which blocks nothing on its own', () => {
+        // Found by the parity run: `*$script,redirect-rule=noopjs,domain=…`
+        // had been compiled into an unconditional redirect, replacing every
+        // script on some two hundred sites with an empty stub.
+        const { rules, stats } = rulesFor('*$script,redirect-rule=noopjs,domain=example.com');
+        expect(rules).toHaveLength(0);
+        expect(stats.unconvertibleReasons['redirect-rule:not-expressible']).toBe(1);
+    });
+
+    it('still converts a plain $redirect next to a $redirect-rule', () => {
+        const { rules } = rulesFor('||a.com^$redirect=noopjs', '*$script,redirect-rule=noopjs,domain=b.com');
+        expect(rules).toHaveLength(1);
+        expect(rules[0].action.type).toBe('redirect');
+    });
 });
 
 describe('wildcard TLD expansion', () => {

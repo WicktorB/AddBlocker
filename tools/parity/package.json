@@ -1,0 +1,16 @@
+{
+  "name": "@addblocker/parity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "parity": "tsx src/parity.ts",
+    "parity-sites": "tsx src/sites.ts"
+  },
+  "devDependencies": {
+    "@gorhill/ubo-core": "^0.1.30",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0",
+    "playwright-core": "^1.49.0"
+  }
+}

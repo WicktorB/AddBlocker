@@ -228,12 +228,52 @@ Une règle neutralisée ne se déclenchant plus, elle ne peut pas reparaître da
 
 Limite assumée : les identifiants de règles sont renumérotés à chaque rebuild, donc une neutralisation ne survit pas à `update-filters`. C'est un dépannage immédiat, pas une préférence durable, et l'interface le dit.
 
-## Phase 6 — Mesure de parité (2 semaines)
+## Phase 6 — Mesure de parité ✅ (partiellement — voir la limite)
 
-- `tools/bench` : corpus 200–500 sites, comparaison automatisée contre uBO MV2 (Firefox) comme référence.
-- Intégration CI : détection de régression du taux de blocage à chaque changement du compilateur.
+> **Critère de sortie** : **≥ 95 % du taux de blocage d'uBO**, **≤ 1 %** de sites cassés.
+> **Atteint sur corpus synthétique** : 100 % du taux de blocage, 0 % de sur-blocage.
+> **Non mesuré sur le web réel** : le proxy de l'environnement de développement refuse le CONNECT vers les sites (403). Le harnais existe et fonctionne, il reste à l'exécuter sur une machine connectée.
 
-> **Critère de sortie** : **≥ 95 % du taux de blocage d'uBO** sur le corpus, **≤ 1 %** de sites cassés.
+### La référence est uBlock Origin lui-même
+
+Pas une approximation : `@gorhill/ubo-core` **est** le moteur de filtrage réseau statique d'uBO, publié en bibliothèque. Il reçoit les mêmes listes et arbitre chaque requête. Notre côté est mesuré dans un vrai Chromium exécutant l'extension construite — c'est le moteur `declarativeNetRequest` de Chrome qui décide, pas un modèle de celui-ci. Une requête en échec n'est jamais prise pour une preuve de blocage : seul un `onRuleMatchedDebug` compte.
+
+| Graine | Requêtes | uBO bloque | Nous bloquons | Parité | Sur-blocage |
+|---|---|---|---|---|---|
+| 20260806 | 5 200 | 3 869 | 3 869 | **100 %** | **0 %** |
+| 987654321 | 5 200 | 3 843 | 3 843 | **100 %** | **0 %** |
+
+### Le corpus vient des listes brutes, pas de nos règles
+
+Distinction essentielle : un filtre que le compilateur échoue à convertir ne laisse aucune trace dans nos règles. Un corpus bâti sur elles ne pourrait donc jamais contenir les requêtes que nous ratons — la mesure se flatterait elle-même.
+
+Les cas discriminants sont construits **par paires** : la même requête depuis un contexte que le filtre couvre et depuis un contexte qu'il ne couvre pas. Perdre une restriction `$domain=` ou `$third-party` à la compilation ne se voit pas sur le premier ; c'est le second qui le révèle. Le corpus contient aussi des requêtes qui ne doivent **pas** être bloquées — sans elles, un bloqueur qui bloque tout obtiendrait un score parfait.
+
+### Trois erreurs de mesure avant d'obtenir un chiffre honnête
+
+Le premier résultat fut 100 % du premier coup, sur 200 requêtes. C'était un signal d'alarme, pas un succès : le corpus n'était fait que de `||domaine^` triviaux.
+
+1. **Listes inégales.** uBO recevait les 22 listes, l'extension en désactive une par défaut (*annoyances*). L'écart était imputé au compilateur. Corrigé : uBO ne reçoit que les listes réellement actives.
+2. **Redirections comptées comme des échecs.** Une action `redirect` empêche la ressource d'origine de se charger tout autant qu'un `block`, et uBO compte ainsi ses propres filtres `$redirect`. Ne compter que `block` transformait des requêtes correctement traitées en manques.
+3. **Un bug réel, trouvé grâce aux deux corrections précédentes** — voir ci-dessous.
+
+### Le bug que cette phase a trouvé
+
+```
+*$script,redirect-rule=noopjs,domain=acusports.com|…|siusalukis.com|…
+```
+
+`$redirect-rule` ressemble à `$redirect` et n'a pas le même sens : il ne bloque **rien** par lui-même, il dit seulement quoi servir *si un autre filtre bloque déjà* la requête. Le compilateur les traitait à l'identique et produisait une redirection inconditionnelle sur le motif `*` — donc **tout script remplacé par un stub vide sur environ deux cents sites**, qui auraient été intégralement cassés.
+
+DNR n'a pas de forme conditionnelle : ces filtres n'émettent désormais plus rien. Le blocage reste assuré par le filtre qui bloquait déjà ; seul le stub neutre est perdu. Cas de non-régression ajouté, dans les deux sens (`$redirect` doit continuer de fonctionner).
+
+C'est le genre de défaut qu'aucune relecture n'attrape : le filtre est syntaxiquement correct, la règle produite est valide, Chrome l'accepte sans broncher, et le symptôme n'apparaît que sur des sites précis.
+
+### Ce qui reste non mesuré
+
+`pnpm parity-sites` pilote Chromium sur des sites réels, enregistre chaque requête, demande son verdict à uBO, et juge la casse **par différence** avec la même page sans extension — un site cassé tout seul ne nous est pas imputé. Le corpus fourni compte 243 sites (presse, commerce, vidéo, forums, services publics, plus des sites techniques en témoins).
+
+Il n'a pas pu tourner ici : le proxy refuse le CONNECT vers le web ouvert. Le pipeline est validé de bout en bout contre un serveur local (uBO 2, nous 2, aucune casse), mais **la distribution du trafic réel n'est pas celle d'un corpus synthétique** : requêtes générées après exécution de scripts, URL dynamiques, première partie mêlée à la troisième. Le 100 % ci-dessus mesure la fidélité de la traduction des filtres, pas le comportement sur une page de presse chargée.
 
 ---
 

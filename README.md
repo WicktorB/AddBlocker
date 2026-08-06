@@ -20,7 +20,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 226 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
+| `pnpm test` | 257 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
@@ -30,6 +30,8 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 | `pnpm kill-check` | Vérifie la neutralisation d'une règle précise |
 | `pnpm reload-check` | Vérifie que le rebuild est bien pris en compte |
 | `pnpm oracle` | Compare nos décisions à `@adguard/tsurlfilter` |
+| `pnpm parity` | Mesure la parité contre le moteur réel d'uBlock Origin |
+| `pnpm parity-sites` | Même mesure sur des sites réels (nécessite le web ouvert) |
 
 ## Où ça en est
 
@@ -39,6 +41,8 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 | Filtrage cosmétique | ✅ 22 113 domaines, 56 100 sélecteurs, sans flash |
 | Scriptlets | ✅ 61 805 invocations, 99,5 % du catalogue couvert |
 | UI (popup, options, picker) | ✅ bascule par site en ~150 ms, filtres utilisateur, picker |
+| Mise à jour des listes | ✅ `pnpm update-filters` en 4,1 s, kill switch par règle |
+| Parité vs uBlock Origin | ✅ 100 % sur 5 200 requêtes, 0 % de sur-blocage — non mesuré sur le web réel |
 
 ## Documentation
 
@@ -58,7 +62,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Domaine | Cible |
 |---|---|
-| Blocage réseau | ~95 % d'uBO |
+| Blocage réseau | **100 % d'uBO** sur corpus synthétique (5 200 requêtes, 0 % de sur-blocage) |
 | Filtrage cosmétique (dont procédural) | ~100 % |
 | Scriptlets / anti‑anti‑adblock | ~95 % |
 | Réactivité aux ripostes | inférieure — limite structurelle de MV3, sans solution |

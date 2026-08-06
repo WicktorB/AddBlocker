@@ -43,6 +43,19 @@ export interface FilterOptions {
     /** `$popup` / `$popunder`: blocks a document opened in a new tab. */
     popup: boolean;
     redirect: string | null;
+    /**
+     * `$redirect-rule=` rather than `$redirect=`.
+     *
+     * The two look alike and are not: `$redirect` blocks the request and
+     * substitutes a resource, while `$redirect-rule` blocks nothing on its own
+     * and only says what to serve *if some other filter* already blocks it.
+     * DNR cannot express that condition, so these filters emit nothing — the
+     * request stays blocked by whatever was blocking it, and only the neutered
+     * stub is lost. Translating one as a plain redirect would neutralise every
+     * matching request instead, which is how `*$script,redirect-rule=noopjs`
+     * came to replace every script on two hundred sites.
+     */
+    redirectRuleOnly: boolean;
     removeParam: string | null;
     csp: string | null;
     /**

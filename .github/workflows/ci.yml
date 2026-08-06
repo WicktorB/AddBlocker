@@ -53,10 +53,28 @@ jobs:
       - name: Verify UI flows
         run: pnpm ui-check
 
+      # Neutralising one rule must unblock exactly that rule's requests.
+      - name: Verify the kill switch
+        run: pnpm kill-check
+
+      # A rebuild has to reach the running extension, or an update is a no-op.
+      - name: Verify the reload path
+        run: pnpm reload-check
+
       # Compares our decisions against tsurlfilter's. Fails on over-blocking
       # or on any divergence we cannot explain.
       - name: Differential oracle
         run: pnpm oracle
+
+      # Parity against uBlock Origin's own engine. A smaller corpus than a
+      # local run so the job stays quick; the thresholds are the same, so a
+      # regression in the compiler fails the build rather than being noticed
+      # months later on a real site.
+      - name: Parity vs uBlock Origin
+        env:
+          PARITY_SITES: '80'
+          PARITY_PER_SITE: '15'
+        run: pnpm parity
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -65,5 +83,6 @@ jobs:
           path: |
             dist/extension/manifest.json
             dist/oracle-report.json
+            dist/parity-report.json
           retention-days: 7
           if-no-files-found: ignore

@@ -60,6 +60,14 @@ export function unconvertibleReason(filter: NetworkFilter): string | null {
     // nothing to serve.
     if (o.redirect !== null && o.redirect === '') return 'redirect:empty-target';
 
+    // `$redirect-rule` substitutes a resource only for requests some *other*
+    // filter already blocks. DNR has no conditional form, so emitting it as a
+    // plain redirect would neutralise every matching request instead — for a
+    // pattern like `*$script,redirect-rule=noopjs,domain=…` that is every
+    // script on every listed site. Dropping it keeps the blocking that other
+    // filters provide and loses only the neutered stub.
+    if (o.redirectRuleOnly) return 'redirect-rule:not-expressible';
+
     return null;
 }
 
