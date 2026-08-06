@@ -23,7 +23,8 @@ import { reloadExtension } from './reload.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const CACHE_DIR = join(ROOT, '.filter-cache');
-const RULES_DIR = join(ROOT, 'dist', 'extension', 'rules');
+const EXTENSION_DIR = join(ROOT, 'dist', 'extension');
+const RULES_DIR = join(EXTENSION_DIR, 'rules');
 const EXTENSION_NAME = 'AddBlocker';
 
 const CONCURRENCY = 8;
@@ -205,7 +206,7 @@ async function main(): Promise<void> {
         throw new Error(`${failed.length} list(s) could not be fetched and have no cached copy`);
     }
 
-    const built = existsSync(join(ROOT, 'dist', 'extension', 'manifest.json'));
+    const built = existsSync(join(EXTENSION_DIR, 'manifest.json'));
     if (updated.length === 0 && built && !force) {
         console.log('Nothing changed upstream — extension left as is (--force to rebuild anyway).');
         console.log(`\nDone in ${((Date.now() - started) / 1000).toFixed(1)} s`);
@@ -234,9 +235,9 @@ async function main(): Promise<void> {
     }
     if (!moved) console.log('  no change in the compiled rules');
 
-    const reload = await reloadExtension(EXTENSION_NAME, port);
+    const reload = await reloadExtension(EXTENSION_NAME, port, EXTENSION_DIR);
     console.log(reload.ok
-        ? `\nExtension reloaded (${reload.extensionId}).`
+        ? `\nExtension reloaded (${reload.extensionId}, via ${reload.via}).`
         : `\nExtension not reloaded: ${reload.reason}.\n`
             + '  Reload it from chrome://extensions, or start Chrome with\n'
             + `  --remote-debugging-port=${port} to have this done automatically.`);

@@ -218,6 +218,14 @@ Le harnais installe donc l'extension via `Extensions.loadUnpacked` (CDP), c'est-
 
 Si aucun Chrome n'écoute sur le port de debug, la mise à jour réussit quand même et le script indique l'étape manuelle. Le rechargement est le seul maillon qui dépend de l'environnement ; le faire échouer bruyamment serait disproportionné.
 
+### Le second piège : chercher un service worker qui dort
+
+Première version : trouver le service worker de l'extension parmi les cibles DevTools, et l'utiliser pour appeler `chrome.runtime.reload()`. Vert en local, **rouge en CI**. Ce n'était pas un aléa : un service worker MV3 est piloté par événements et **dort la plupart du temps**. Chercher un worker en cours d'exécution échoue donc précisément dans le cas normal — un navigateur au repos, qui est exactement l'état d'un navigateur quand on lance une mise à jour. En local il était encore éveillé ; sur le runner, non.
+
+Le rechargement passe maintenant par une **page de l'extension**, ouverte à la demande : un contexte avec l'API `chrome` existe alors indépendamment de l'état du worker. Son identifiant est dérivé du chemin d'installation — Chrome le calcule comme les seize premiers octets du SHA-256 du chemin absolu, chaque quartet mappé sur `a`–`p`. Vérifié contre un vrai Chromium plutôt que tenu pour acquis, puisque tout le mécanisme de secours repose dessus.
+
+Le test force désormais la condition au lieu de l'attendre : il ferme toutes les cibles de l'extension, vérifie qu'il n'en reste aucune, puis recharge — et exige que ce soit bien la voie « page ouverte » qui ait fonctionné.
+
 ### Kill switch par règle
 
 `updateStaticRules()` neutralise une règle statique précise, sans toucher au reste. C'est la réparation fine que l'allowlist par site ne sait pas faire : quand une règle sur des dizaines de milliers casse un détail, couper tout le site — ou toute la liste — abandonne beaucoup trop.

@@ -29,8 +29,9 @@ const BUILT = join(ROOT, 'dist', 'extension');
 const STAGED = join(ROOT, 'dist', 'reload-check-extension');
 const DEBUG_PORT = 9333;
 
-/** Not in any filter list, so it is only ever blocked by the rule added below. */
+/** Not in any filter list, so they are only ever blocked by the rules added below. */
 const NEW_DOMAIN = 'freshly-blocked-9f3a2b.test';
+const SECOND_DOMAIN = 'second-round-4c8e1d.test';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); });
 
@@ -74,11 +75,13 @@ function startServer(known: string): Promise<{ server: Server; port: number }> {
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end(`<!doctype html><meta charset="utf-8"><title>reload</title>
 <script>
-window.__known = null; window.__fresh = null;
+window.__known = null; window.__fresh = null; window.__second = null;
 fetch('http://${known}/ads.js', {cache:'no-store'})
   .then(() => { window.__known = false; }).catch(() => { window.__known = true; });
 fetch('http://${NEW_DOMAIN}/ads.js', {cache:'no-store'})
   .then(() => { window.__fresh = false; }).catch(() => { window.__fresh = true; });
+fetch('http://${SECOND_DOMAIN}/ads.js', {cache:'no-store'})
+  .then(() => { window.__second = false; }).catch(() => { window.__second = true; });
 </script>`);
     });
     return new Promise((resolve) => {
@@ -89,7 +92,21 @@ fetch('http://${NEW_DOMAIN}/ads.js', {cache:'no-store'})
     });
 }
 
-interface Probe { known: boolean | null; fresh: boolean | null }
+interface Probe { known: boolean | null; fresh: boolean | null; second: boolean | null }
+
+interface CdpTarget { id: string; type: string; url: string }
+
+/** Extension contexts Chrome currently has running. */
+async function listExtensionTargets(): Promise<CdpTarget[]> {
+    try {
+        const response = await fetch(`http://127.0.0.1:${String(DEBUG_PORT)}/json/list`,
+            { signal: AbortSignal.timeout(3_000) });
+        const targets = await response.json() as CdpTarget[];
+        return targets.filter((t) => t.url.startsWith('chrome-extension://'));
+    } catch {
+        return [];
+    }
+}
 
 async function main(): Promise<void> {
     const knownDomain = await pickBlockedDomain();
@@ -133,6 +150,7 @@ async function main(): Promise<void> {
         const state = await page.evaluate(() => ({
             known: (window as unknown as { __known: boolean | null }).__known,
             fresh: (window as unknown as { __fresh: boolean | null }).__fresh,
+            second: (window as unknown as { __second: boolean | null }).__second,
         }));
         await page.close();
         return state;
@@ -150,7 +168,9 @@ async function main(): Promise<void> {
         const browser = context.browser();
         if (browser === null) throw new Error('no browser handle');
         const session = await (browser as unknown as {
-            newBrowserCDPSession: () => Promise<{ send: (m: string, p: unknown) => Promise<unknown> }>;
+            newBrowserCDPSession: () => Promise<{
+                send: (m: string, p: unknown) => Promise<unknown>;
+            }>;
         }).newBrowserCDPSession();
         const installed = await session.send('Extensions.loadUnpacked', { path: STAGED }) as { id?: string };
         check(typeof installed.id === 'string', 'the extension installs as unpacked', installed.id ?? '');
@@ -180,15 +200,50 @@ async function main(): Promise<void> {
             `__fresh=${stale.fresh}`);
 
         console.log('\nReload through the DevTools protocol');
-        const outcome = await reloadExtension('AddBlocker', DEBUG_PORT);
+        const outcome = await reloadExtension('AddBlocker', DEBUG_PORT, STAGED);
         check(outcome.ok, 'update-filters finds and reloads the extension',
-            outcome.ok ? outcome.extensionId : outcome.reason);
+            outcome.ok ? `${outcome.extensionId} via ${outcome.via}` : outcome.reason);
 
         await sleep(1_000);
         const after = await waitFor((p) => p.fresh === true);
         check(after.fresh === true, 'the rebuilt rules are in effect', `__fresh=${after.fresh}`);
         check(after.known === true, 'the rules that were already there still apply',
             `__known=${after.known}`);
+
+        // The case CI caught. A Manifest V3 service worker is asleep most of
+        // the time, so a reload that hunts for a running one finds nothing
+        // exactly when someone runs an update on an idle browser. Here the
+        // worker is stopped on purpose so the fallback is what gets tested,
+        // rather than being left to whether the machine happened to be slow.
+        console.log('\nAgain, with no extension context running');
+        for (const target of await listExtensionTargets()) {
+            await session.send('Target.closeTarget', { targetId: target.id })
+                .catch(() => undefined);
+        }
+        await sleep(1_000);
+        const remaining = await listExtensionTargets();
+        check(remaining.length === 0, 'no extension context is left running',
+            `${remaining.length} target(s)`);
+
+        const secondRules = JSON.parse(await readFile(rulesPath, 'utf8')) as Array<{ id: number }>;
+        secondRules.push({
+            id: Math.max(...secondRules.map((r) => r.id)) + 1,
+            priority: 1000,
+            action: { type: 'block' },
+            condition: { requestDomains: [SECOND_DOMAIN] },
+        } as unknown as { id: number });
+        await writeFile(rulesPath, JSON.stringify(secondRules), 'utf8');
+
+        const asleep = await reloadExtension('AddBlocker', DEBUG_PORT, STAGED);
+        check(asleep.ok, 'the reload works with the worker asleep',
+            asleep.ok ? `via ${asleep.via}` : asleep.reason);
+        check(asleep.ok && asleep.via === 'opened page',
+            'and it does so by opening one of the extension\'s own pages');
+
+        await sleep(1_000);
+        const second = await waitFor((p) => p.second === true);
+        check(second.second === true, 'the second change is in effect too',
+            `__second=${second.second}`);
     } finally {
         await context.close();
         server.close();
