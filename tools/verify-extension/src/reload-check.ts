@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type BrowserContext } from 'playwright-core';
 
-import { reloadExtension } from '../../update-filters/src/reload.js';
+import { extensionIdForPath, reloadExtension } from '../../update-filters/src/reload.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
@@ -199,12 +199,28 @@ async function main(): Promise<void> {
         check(stale.fresh === false, 'the change does nothing until the reload',
             `__fresh=${stale.fresh}`);
 
-        console.log('\nReload through the DevTools protocol');
-        const outcome = await reloadExtension('AddBlocker', DEBUG_PORT, STAGED);
-        check(outcome.ok, 'update-filters finds and reloads the extension',
-            outcome.ok ? `${outcome.extensionId} via ${outcome.via}` : outcome.reason);
-        check(outcome.ok && outcome.via === 'live target',
-            'and does so through the context that was already running');
+        // The worker-asleep case goes first, on purpose. It is the regression
+        // CI actually caught, and a reload can cost us the extension on
+        // browsers that treat a CDP-loaded one as transient — so whichever
+        // round runs second may not get to run at all. The case that broke
+        // gets the guaranteed slot.
+        console.log('\nWith no extension context running');
+        for (const target of await listExtensionTargets()) {
+            await session.send('Target.closeTarget', { targetId: target.id }).catch(() => undefined);
+        }
+        await sleep(1_000);
+        const remaining = await listExtensionTargets();
+        check(remaining.length === 0, 'no extension context is left running',
+            `${remaining.length} target(s)`);
+
+        // A Manifest V3 service worker is asleep most of the time, so a reload
+        // that hunts for a running one finds nothing exactly when someone runs
+        // an update on an idle browser.
+        const asleep = await reloadExtension('AddBlocker', DEBUG_PORT, STAGED);
+        check(asleep.ok, 'update-filters reloads with the worker asleep',
+            asleep.ok ? `${asleep.extensionId} via ${asleep.via}` : asleep.reason);
+        check(asleep.ok && asleep.via === 'opened page',
+            'and it does so by opening one of the extension\'s own pages');
 
         await sleep(1_000);
         const after = await waitFor((p) => p.fresh === true && p.known === true);
@@ -220,21 +236,14 @@ async function main(): Promise<void> {
         const survived = after.known === true;
         if (survived) {
             check(after.fresh === true, 'the rebuilt rules are in effect', `__fresh=${after.fresh}`);
-            check(after.known === true, 'the rules that were already there still apply',
-                `__known=${after.known}`);
         } else {
             console.log('  SKIP  end-to-end effect — this browser drops a CDP-loaded extension '
                 + 'on reload, so there is nothing left to observe');
             console.log('        (verified on Chromium 141; a "Load unpacked" install survives)');
         }
 
-        // The case CI caught first. A Manifest V3 service worker is asleep most
-        // of the time, so a reload that hunts for a running one finds nothing
-        // exactly when someone runs an update on an idle browser. The worker is
-        // stopped on purpose here, rather than leaving it to whether the machine
-        // happened to be slow.
-        console.log('\nAgain, with no extension context running');
-        let ready = true;
+        console.log('\nAgain, with a context already running');
+        let ready = survived;
         if (!survived) {
             // Put it back, or there would be nothing to reload.
             await session.send('Extensions.loadUnpacked', { path: STAGED }).catch(() => undefined);
@@ -246,14 +255,10 @@ async function main(): Promise<void> {
             // would blame the reload for a shortcoming of the harness.
             console.log('  SKIP  could not reinstall the extension for this round');
         } else {
-            for (const target of await listExtensionTargets()) {
-                await session.send('Target.closeTarget', { targetId: target.id })
-                    .catch(() => undefined);
-            }
-            await sleep(1_000);
-            const remaining = await listExtensionTargets();
-            check(remaining.length === 0, 'no extension context is left running',
-                `${remaining.length} target(s)`);
+            // Guarantee a live context rather than hope the worker is awake.
+            const live = await context.newPage();
+            await live.goto(`chrome-extension://${extensionIdForPath(STAGED)}/options.html`,
+                { timeout: 30_000 }).catch(() => undefined);
 
             const secondRules = JSON.parse(await readFile(rulesPath, 'utf8')) as Array<{ id: number }>;
             secondRules.push({
@@ -264,11 +269,12 @@ async function main(): Promise<void> {
             } as unknown as { id: number });
             await writeFile(rulesPath, JSON.stringify(secondRules), 'utf8');
 
-            const asleep = await reloadExtension('AddBlocker', DEBUG_PORT, STAGED);
-            check(asleep.ok, 'the reload works with the worker asleep',
-                asleep.ok ? `via ${asleep.via}` : asleep.reason);
-            check(asleep.ok && asleep.via === 'opened page',
-                'and it does so by opening one of the extension\'s own pages');
+            const awake = await reloadExtension('AddBlocker', DEBUG_PORT, STAGED);
+            await live.close().catch(() => undefined);
+            check(awake.ok, 'it also reloads through a context already running',
+                awake.ok ? `via ${awake.via}` : awake.reason);
+            check(awake.ok && awake.via === 'live target',
+                'and prefers that context to opening a page');
 
             await sleep(1_000);
             const second = await waitFor((p) => p.second === true && p.known === true);

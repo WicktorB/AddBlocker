@@ -241,6 +241,8 @@ Un harnais sans interface ne peut pas cliquer sur le bouton ; `Extensions.loadUn
 - **Ce qui relève de nous** — la demande de rechargement atteint bien notre extension, par la voie « cible vivante » comme par la voie « page ouverte ». Toujours vérifié.
 - **Ce qui relève du navigateur** — l'extension revient avec les nouvelles règles. Vérifié quand le navigateur le permet ; sinon explicitement marqué `SKIP` avec la raison, plutôt qu'imputé au code.
 
+Le cas « worker endormi » passe **en premier**, délibérément : c'est la régression que la CI a réellement attrapée, et un rechargement peut coûter l'extension sur les navigateurs qui traitent un chargement CDP comme transitoire. Le tour qui passe en second risque donc de ne pas passer du tout — la place garantie revient au cas qui a cassé.
+
 La distinction est ce qui garde le test honnête dans les deux sens : une extension évanouie ne dit rien du rebuild, tandis qu'une extension revenue *sans* les nouvelles règles serait bien notre bug — et échouerait.
 
 ### Kill switch par règle
