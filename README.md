@@ -22,7 +22,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 257 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
+| `pnpm test` | 264 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
@@ -34,6 +34,8 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 | `pnpm oracle` | Compare nos décisions à `@adguard/tsurlfilter` |
 | `pnpm parity` | Mesure la parité contre le moteur réel d'uBlock Origin |
 | `pnpm parity-sites` | Même mesure sur des sites réels (nécessite le web ouvert) |
+| `pnpm build-userscript` | Génère le userscript (mobile, Safari, Tampermonkey) |
+| `pnpm userscript-check` | Vérifie le userscript dans un vrai navigateur |
 
 ## Où ça en est
 
@@ -68,3 +70,11 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 | Filtrage cosmétique (dont procédural) | ~100 % |
 | Scriptlets / anti‑anti‑adblock | ~95 % |
 | Réactivité aux ripostes | inférieure — limite structurelle de MV3, sans solution |
+
+## Sur mobile et dans les navigateurs sans extension
+
+`userscript/addblocker.user.js` (2,0 Mo) s'installe dans **Tampermonkey**, **Violentmonkey** ou **Userscripts** (Safari iOS). `userscript/addblocker-lite.user.js` (290 ko) ne contient que les règles génériques, pour les appareils où la taille compte.
+
+**Ce qu'il ne fait pas : bloquer le réseau.** Aucun gestionnaire de userscripts n'expose l'équivalent de `declarativeNetRequest` — les publicités sont téléchargées puis masquées. La page n'est pas allégée, seulement nettoyée. Deux des trois moteurs sont là (cosmétique et scriptlets), le troisième est structurellement hors d'atteinte.
+
+Pour un vrai blocage réseau : l'extension sur Chrome de bureau, ou un bloqueur de contenu natif sur Safari iOS.

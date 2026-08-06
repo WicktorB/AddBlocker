@@ -9,7 +9,8 @@
     "scriptlet-check": "tsx src/scriptlet-check.ts",
     "ui-check": "tsx src/ui-check.ts",
     "reload-check": "tsx src/reload-check.ts",
-    "kill-check": "tsx src/kill-check.ts"
+    "kill-check": "tsx src/kill-check.ts",
+    "userscript-check": "tsx src/userscript-check.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

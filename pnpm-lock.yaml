@@ -108,6 +108,34 @@ importers:
         specifier: ^4.19.2
         version: 4.23.5
 
+  tools/build-userscript:
+    dependencies:
+      '@addblocker/cosmetic-compiler':
+        specifier: workspace:*
+        version: link:../../packages/cosmetic-compiler
+      '@addblocker/cosmetic-runtime':
+        specifier: workspace:*
+        version: link:../../packages/cosmetic-runtime
+      '@addblocker/filter-parser':
+        specifier: workspace:*
+        version: link:../../packages/filter-parser
+      '@addblocker/scriptlet-compiler':
+        specifier: workspace:*
+        version: link:../../packages/scriptlet-compiler
+      '@addblocker/scriptlet-runtime':
+        specifier: workspace:*
+        version: link:../../packages/scriptlet-runtime
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      esbuild:
+        specifier: ^0.24.2
+        version: 0.24.2
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.5
+
   tools/oracle-diff:
     devDependencies:
       '@adguard/tsurlfilter':

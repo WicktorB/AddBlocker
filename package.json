@@ -6,18 +6,20 @@
   "scripts": {
     "test": "vitest run",
     "build": "pnpm --filter @addblocker/build-rulesets run build",
+    "build-userscript": "pnpm --filter @addblocker/build-userscript run build-userscript",
     "update-filters": "pnpm --filter @addblocker/update-filters run update-filters",
     "verify": "pnpm --filter @addblocker/verify-extension run verify",
     "oracle": "pnpm --filter @addblocker/oracle-diff run oracle",
     "parity": "pnpm --filter @addblocker/parity run parity",
     "parity-sites": "pnpm --filter @addblocker/parity run parity-sites",
     "bench": "pnpm --filter @addblocker/phase0-bench run bench",
-    "check": "pnpm test && pnpm build && pnpm verify && pnpm cosmetic-check && pnpm scriptlet-check && pnpm ui-check && pnpm kill-check && pnpm reload-check && pnpm oracle && pnpm parity",
+    "check": "pnpm test && pnpm build && pnpm verify && pnpm cosmetic-check && pnpm scriptlet-check && pnpm ui-check && pnpm kill-check && pnpm reload-check && pnpm build-userscript && pnpm userscript-check && pnpm oracle && pnpm parity",
     "cosmetic-check": "pnpm --filter @addblocker/verify-extension run cosmetic-check",
     "scriptlet-check": "pnpm --filter @addblocker/verify-extension run scriptlet-check",
     "ui-check": "pnpm --filter @addblocker/verify-extension run ui-check",
     "reload-check": "pnpm --filter @addblocker/verify-extension run reload-check",
-    "kill-check": "pnpm --filter @addblocker/verify-extension run kill-check"
+    "kill-check": "pnpm --filter @addblocker/verify-extension run kill-check",
+    "userscript-check": "pnpm --filter @addblocker/verify-extension run userscript-check"
   },
   "devDependencies": {
     "vitest": "^3.2.7"

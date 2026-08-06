@@ -57,15 +57,32 @@ function injectStylesheet(css: string): void {
     }
 }
 
-function buildCss(payload: CosmeticPayload): string {
+/**
+ * Selectors per rule.
+ *
+ * Blink stops matching a selector list past **8192 entries**: the rule still
+ * parses, `cssRules` still reports it, and `element.matches()` still says the
+ * selector fits — but the style is never applied. Nothing is logged. Measured
+ * exactly: at 8192 the last selector applies, at 8193 it does not.
+ *
+ * The generic sheet alone holds ~13 700 selectors, so a single rule silently
+ * dropped some five thousand of them. This is well under the limit, and low
+ * enough to be safe on engines whose own threshold is undocumented — Safari in
+ * particular, which the userscript build targets and which cannot be measured
+ * from here.
+ */
+export const SELECTORS_PER_RULE = 1_000;
+
+export function buildCss(payload: CosmeticPayload): string {
     const exempt = new Set(payload.exceptions);
     const parts: string[] = [];
 
     const hide = payload.hide.filter((selector) => !exempt.has(selector));
-    if (hide.length > 0) {
-        // One rule with a long selector list beats thousands of rules: the
-        // browser parses it once and matches it with the same machinery.
-        parts.push(`${hide.join(',')}{${HIDE_DECLARATION}}`);
+    // Grouping is still worth it — a rule per selector would be thousands of
+    // rules — but the group has to stay under what the engine will match.
+    for (let start = 0; start < hide.length; start += SELECTORS_PER_RULE) {
+        const group = hide.slice(start, start + SELECTORS_PER_RULE);
+        parts.push(`${group.join(',')}{${HIDE_DECLARATION}}`);
     }
 
     for (const [selector, declaration] of payload.style) {

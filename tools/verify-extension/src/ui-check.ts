@@ -52,11 +52,15 @@ async function pickBlockedDomain(): Promise<string> {
  * A selector the generic sheet hides, taken from the build rather than
  * hard-coded so the check keeps testing something real as lists change.
  */
-async function pickGenericId(): Promise<string> {
+async function pickGenericIds(): Promise<{ first: string; last: string }> {
     const sheet = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
-    const match = /"#([A-Za-z][\w-]{2,40})"/.exec(sheet);
-    if (match === null) throw new Error('no plain id selector found in the generic sheet');
-    return match[1];
+    const ids = [...sheet.matchAll(/"#([A-Za-z][\w-]{2,40})"/g)].map((m) => m[1]);
+    if (ids.length < 2) throw new Error('not enough plain id selectors in the generic sheet');
+    // The last one matters as much as the first: Blink stops matching a
+    // selector list past 8192 entries in silence, and the generic sheet holds
+    // far more. Probing only the first passed for months while thousands of
+    // selectors below the cut did nothing at all.
+    return { first: ids[0], last: ids[ids.length - 1] };
 }
 
 async function stageExtension(): Promise<string> {
@@ -79,7 +83,7 @@ async function stageExtension(): Promise<string> {
     return [...digest].map((c) => String.fromCharCode(parseInt(c, 16) + 97)).join('');
 }
 
-function startServer(blockedDomain: string, genericId: string): Promise<{ server: Server; port: number }> {
+function startServer(blockedDomain: string, generic: { first: string; last: string }): Promise<{ server: Server; port: number }> {
     const server = createServer((req, res) => {
         if (req.url?.endsWith('.js')) {
             res.writeHead(200, {
@@ -92,7 +96,8 @@ function startServer(blockedDomain: string, genericId: string): Promise<{ server
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end(`<!doctype html><meta charset="utf-8"><title>ui</title>
 <div class="ab-target">an element to hide</div>
-<div id="${genericId}">hidden by the generic sheet</div>
+<div id="${generic.first}">hidden by the generic sheet (first)</div>
+<div id="${generic.last}">hidden by the generic sheet (last)</div>
 <div id="sentinel">stays visible</div>
 <script>
 window.__blocked = null;
@@ -132,9 +137,9 @@ interface PageState {
 
 async function main(): Promise<void> {
     const blockedDomain = await pickBlockedDomain();
-    const genericId = await pickGenericId();
+    const genericIds = await pickGenericIds();
     const extensionId = await stageExtension();
-    const { server, port } = await startServer(blockedDomain, genericId);
+    const { server, port } = await startServer(blockedDomain, genericIds);
     const profile = join(ROOT, 'dist', 'ui-profile');
     await rm(profile, { recursive: true, force: true });
 
@@ -171,17 +176,19 @@ async function main(): Promise<void> {
         await page.waitForTimeout(150);
         // No helper functions in here: tsx transpiles them with an esbuild
         // shim that does not exist in the page.
-        const state = await page.evaluate((id) => {
+        const state = await page.evaluate((ids) => {
             const target = document.querySelector('.ab-target');
-            const generic = document.getElementById(id);
+            const one = document.getElementById(ids[0]);
+            const two = document.getElementById(ids[1]);
             const sentinel = document.getElementById('sentinel');
             return {
                 blocked: (window as unknown as { __blocked: boolean | null }).__blocked,
                 userFilterHidden: target === null || target.getBoundingClientRect().height === 0,
-                genericHidden: generic === null || generic.getBoundingClientRect().height === 0,
+                genericHidden: (one === null || one.getBoundingClientRect().height === 0)
+                    && (two === null || two.getBoundingClientRect().height === 0),
                 sentinelVisible: sentinel !== null && sentinel.getBoundingClientRect().height > 0,
             };
-        }, genericId);
+        }, [genericIds.first, genericIds.last]);
         await page.close();
         return state;
     };
@@ -245,7 +252,8 @@ async function main(): Promise<void> {
         const baseline = await waitForPage((s) => s.blocked === true && s.genericHidden);
         check(baseline.state.blocked === true, 'request is blocked before disabling',
             `__blocked=${baseline.state.blocked}`);
-        check(baseline.state.genericHidden, `the generic sheet hides #${genericId}`);
+        check(baseline.state.genericHidden,
+            `the generic sheet hides #${genericIds.first} and #${genericIds.last}`);
 
         const toggleStarted = Date.now();
         const toggled = await send(context, extensionId, {

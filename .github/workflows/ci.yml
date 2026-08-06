@@ -61,6 +61,15 @@ jobs:
       - name: Verify the reload path
         run: pnpm reload-check
 
+      # The userscript build, for browsers that cannot run the extension.
+      # Its cosmetic and scriptlet engines are the same code, so a regression
+      # here is a regression there.
+      - name: Build the userscript
+        run: pnpm build-userscript
+
+      - name: Verify the userscript
+        run: pnpm userscript-check
+
       # Compares our decisions against tsurlfilter's. Fails on over-blocking
       # or on any divergence we cannot explain.
       - name: Differential oracle
