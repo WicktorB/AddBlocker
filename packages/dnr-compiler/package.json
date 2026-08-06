@@ -1,0 +1,11 @@
+{
+  "name": "@addblocker/dnr-compiler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "vitest run" },
+  "dependencies": { "@addblocker/filter-parser": "workspace:*" },
+  "devDependencies": { "vitest": "^3.0.0" }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@addblocker/update-filters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "update-filters": "tsx src/update.ts" },
+  "devDependencies": {
+    "@addblocker/build-rulesets": "workspace:*",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0"
+  }
+}

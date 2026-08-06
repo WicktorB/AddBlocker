@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>AddBlocker — Réglages</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1a202c; --muted:#718096; --line:#e2e8f0; --accent:#2b6cb0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1a202c; --fg:#f7fafc; --muted:#a0aec0; --line:#2d3748; --accent:#63b3ed; }
+  }
+  * { box-sizing: border-box; }
+  body { max-width: 720px; margin: 0 auto; padding: 28px 20px;
+         font: 14px/1.6 system-ui,-apple-system,sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+  p.hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  label.row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+  textarea { width: 100%; min-height: 160px; font: 12px/1.5 ui-monospace, monospace;
+             padding: 10px; border-radius: 6px; border: 1px solid var(--line);
+             background: transparent; color: var(--fg); resize: vertical; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; cursor: pointer;
+           border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+  .status { color: var(--muted); font-size: 13px; margin-left: 10px; }
+  ul { padding-left: 18px; margin: 6px 0; }
+  li { font-size: 13px; }
+  .empty { color: var(--muted); font-style: italic; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>AddBlocker</h1>
+  <p class="hint">Extension non empaquetée — les réglages s'appliquent au rechargement des pages.</p>
+
+  <h2>Listes de filtres</h2>
+  <p class="hint">Désactiver une liste libère du quota de règles pour les autres.</p>
+  <div id="rulesets"></div>
+
+  <h2>Sites désactivés</h2>
+  <p class="hint">Le filtrage est entièrement coupé sur ces domaines et leurs sous-domaines.</p>
+  <div id="sites"></div>
+
+  <h2>Règles neutralisées</h2>
+  <p class="hint">
+    Règles individuelles coupées depuis le popup pour réparer un site. Elles ne
+    survivent pas à une mise à jour des listes, qui renumérote les règles.
+  </p>
+  <div id="killed"></div>
+
+  <h2>Mes filtres</h2>
+  <p class="hint">
+    Un filtre par ligne. Cosmétique : <code>exemple.fr##.banniere</code> — réseau : <code>||pub.exemple.fr^</code>.
+    Les filtres créés avec le sélecteur d'élément apparaissent ici.
+  </p>
+  <textarea id="filters" spellcheck="false" placeholder="exemple.fr##.banniere-pub"></textarea>
+  <p><button id="save">Enregistrer</button><span class="status" id="status"></span></p>
+
+  <script src="options.js"></script>
+</body>
+</html>

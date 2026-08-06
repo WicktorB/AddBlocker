@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `version:` here on purpose — the action reads packageManager from
+      # package.json, and declaring it in both places is a hard error.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Semantics of the ABP -> DNR mapping. Fast, so it runs first.
+      - name: Unit tests
+        run: pnpm test
+
+      # Fails on quota overruns, invalid rules, or a conversion rate above 3%.
+      - name: Build rulesets
+        run: pnpm build
+
+      # We depend on playwright-core, whose CLI is named playwright-core —
+      # there is no `playwright` binary to exec.
+      - name: Install Chromium
+        run: pnpm --filter @addblocker/verify-extension exec playwright-core install --with-deps chromium
+
+      # Chrome silently disables a whole ruleset containing one invalid rule.
+      # Only a real browser catches that, so this check is blocking.
+      - name: Verify in Chromium
+        run: pnpm verify
+
+      # Cosmetic filtering: selectors must hide their targets, and nothing may
+      # flash before being hidden.
+      - name: Verify cosmetic filtering
+        run: pnpm cosmetic-check
+
+      # Scriptlets must run in the page's own world, before the page's scripts.
+      - name: Verify scriptlets
+        run: pnpm scriptlet-check
+
+      # The user-facing flows: unblock a broken site, create a filter.
+      - name: Verify UI flows
+        run: pnpm ui-check
+
+      # Neutralising one rule must unblock exactly that rule's requests.
+      - name: Verify the kill switch
+        run: pnpm kill-check
+
+      # A rebuild has to reach the running extension, or an update is a no-op.
+      - name: Verify the reload path
+        run: pnpm reload-check
+
+      # The userscript build, for browsers that cannot run the extension.
+      # Its cosmetic and scriptlet engines are the same code, so a regression
+      # here is a regression there.
+      - name: Build the userscript
+        run: pnpm build-userscript
+
+      - name: Verify the userscript
+        run: pnpm userscript-check
+
+      # Compares our decisions against tsurlfilter's. Fails on over-blocking
+      # or on any divergence we cannot explain.
+      - name: Differential oracle
+        run: pnpm oracle
+
+      # Parity against uBlock Origin's own engine. A smaller corpus than a
+      # local run so the job stays quick; the thresholds are the same, so a
+      # regression in the compiler fails the build rather than being noticed
+      # months later on a real site.
+      - name: Parity vs uBlock Origin
+        env:
+          PARITY_SITES: '80'
+          PARITY_PER_SITE: '15'
+        run: pnpm parity
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-output
+          path: |
+            dist/extension/manifest.json
+            dist/oracle-report.json
+            dist/parity-report.json
+          retention-days: 7
+          if-no-files-found: ignore

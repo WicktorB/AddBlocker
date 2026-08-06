@@ -1,0 +1,9 @@
+{
+  "name": "@addblocker/extension-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/settings.ts",
+  "exports": { ".": "./src/settings.ts", "./selector": "./src/selector.ts" },
+  "devDependencies": { "vitest": "^3.0.0" }
+}
