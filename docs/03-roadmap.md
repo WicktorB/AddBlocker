@@ -226,6 +226,23 @@ Le rechargement passe maintenant par une **page de l'extension**, ouverte à la 
 
 Le test force désormais la condition au lieu de l'attendre : il ferme toutes les cibles de l'extension, vérifie qu'il n'en reste aucune, puis recharge — et exige que ce soit bien la voie « page ouverte » qui ait fonctionné.
 
+### Ce que le harnais peut vérifier, et ce qui ne dépend pas de nous
+
+La survie de l'extension à son propre rechargement dépend de **comment elle a été chargée**, pas de notre code :
+
+| Mode de chargement | Après `chrome.runtime.reload()` |
+|---|---|
+| « Charger l'extension non empaquetée » (le cas de l'utilisateur) | persiste, rechargée depuis le disque |
+| `--load-extension` (drapeau) | **disparaît définitivement** |
+| `Extensions.loadUnpacked` (CDP) | persiste sur Chromium 141, disparaît sur le build utilisé en CI |
+
+Un harnais sans interface ne peut pas cliquer sur le bouton ; `Extensions.loadUnpacked` en est l'approximation la plus proche, et son comportement varie selon la version. Le test distingue donc deux verdicts au lieu d'un :
+
+- **Ce qui relève de nous** — la demande de rechargement atteint bien notre extension, par la voie « cible vivante » comme par la voie « page ouverte ». Toujours vérifié.
+- **Ce qui relève du navigateur** — l'extension revient avec les nouvelles règles. Vérifié quand le navigateur le permet ; sinon explicitement marqué `SKIP` avec la raison, plutôt qu'imputé au code.
+
+La distinction est ce qui garde le test honnête dans les deux sens : une extension évanouie ne dit rien du rebuild, tandis qu'une extension revenue *sans* les nouvelles règles serait bien notre bug — et échouerait.
+
 ### Kill switch par règle
 
 `updateStaticRules()` neutralise une règle statique précise, sans toucher au reste. C'est la réparation fine que l'allowlist par site ne sait pas faire : quand une règle sur des dizaines de milliers casse un détail, couper tout le site — ou toute la liste — abandonne beaucoup trop.
