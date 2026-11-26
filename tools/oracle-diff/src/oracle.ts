@@ -15,6 +15,8 @@ import { createServer, type Server } from 'node:http';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+
+import { EXTENSION_ENV, preprocess } from '@addblocker/filter-parser';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -137,7 +139,10 @@ async function buildOracle(): Promise<Engine> {
     let id = 1;
     for (const file of files) {
         if (!file.endsWith('.txt')) continue;
-        filters.push({ id: id++, content: await readFile(join(CACHE_DIR, file), 'utf8'), ignoreCosmetic: true });
+        // Resolved exactly as the build resolves them, so both sides are
+        // compiling the same filters.
+        const content = preprocess(await readFile(join(CACHE_DIR, file), 'utf8'), EXTENSION_ENV).text;
+        filters.push({ id: id++, content, ignoreCosmetic: true });
     }
     return Engine.createSync({ filters });
 }
@@ -282,13 +287,18 @@ async function main(): Promise<void> {
 
         const fetchFailed = await page.evaluate(async (urls: string[]) => {
             const out: boolean[] = [];
+            // As a <script>, not with fetch(): the probes are declared to the
+            // oracle as script requests, and fetch() issues an xmlhttprequest.
+            // A rule restricted to `$script` rightly ignores that, which showed
+            // up as "the oracle blocks, we do not" for a rule that was correct.
             for (const url of urls) {
-                try {
-                    await fetch(url, { cache: 'no-store' });
-                    out.push(false);
-                } catch {
-                    out.push(true);
-                }
+                out.push(await new Promise<boolean>((resolve) => {
+                    const element = document.createElement('script');
+                    element.onload = () => { element.remove(); resolve(false); };
+                    element.onerror = () => { element.remove(); resolve(true); };
+                    element.src = url;
+                    document.documentElement.append(element);
+                }));
             }
             return out;
         }, probes.map((p) => p.url));
@@ -299,9 +309,17 @@ async function main(): Promise<void> {
 
         // A probe counts as blocked only when a rule whose action is `block`
         // fired for its URL.
-        const blockedUrls = new Set(
-            matches.filter((m) => ruleActions.get(m.key) === 'block').map((m) => m.url),
+        //
+        // Compared without the scheme. A domain on Chrome's HSTS preload list
+        // is upgraded to https before the request is made, so the rule fires
+        // for `https://…` while the probe asked for `http://…` — the same
+        // request, blocked, and an exact comparison would report it as let
+        // through.
+        const schemeless = (url: string): string => url.replace(/^https?:/, '');
+        const blockedRequests = new Set(
+            matches.filter((m) => ruleActions.get(m.key) === 'block').map((m) => schemeless(m.url)),
         );
+        const blockedUrls = { has: (url: string): boolean => blockedRequests.has(schemeless(url)) };
         ourVerdicts = probes.map((p) => blockedUrls.has(p.url));
 
         // Surface the gap between the two signals: a fetch that failed without

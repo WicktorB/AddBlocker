@@ -61,8 +61,16 @@ export function parseProcedural(selector: string): ProceduralSelector | null {
     return { prefix: prefix.trim() === '' ? '*' : prefix.trim(), steps, remove, declaration: null };
 }
 
+/**
+ * `textContent`, not `innerText`, as uBO does.
+ *
+ * `innerText` is defined in terms of what is rendered, so reading it forces a
+ * layout. This runs for every candidate of every `:has-text()` selector on
+ * every batch of mutations — while the page is loading, that is a forced
+ * reflow in a loop. `textContent` is a plain walk of the tree.
+ */
 function textOf(element: Element): string {
-    return (element as HTMLElement).innerText ?? element.textContent ?? '';
+    return element.textContent ?? '';
 }
 
 /** Builds a matcher for `/regex/` or plain-substring arguments. */

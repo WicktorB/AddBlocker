@@ -17,6 +17,8 @@ import { createServer, type Server } from 'node:http';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+
+import { EXTENSION_ENV, preprocess } from '@addblocker/filter-parser';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -75,7 +77,10 @@ async function readLists(): Promise<{
             const path = join(CACHE_DIR, `${source.id}.txt`);
             if (!existsSync(path)) continue;
             if (!enabled.has(ruleset.id)) { skipped.push(source.id); continue; }
-            const raw = await readFile(path, 'utf8');
+            // The same directive resolution as the build: both engines must be
+            // handed the same filters, or the comparison measures which `!#if`
+            // branches each one took rather than how faithfully we translate.
+            const raw = preprocess(await readFile(path, 'utf8'), EXTENSION_ENV).text;
             lists.push({ name: source.id, raw });
             lines.push(...raw.split('\n'));
         }
@@ -143,6 +148,13 @@ async function stageExtension(): Promise<string> {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.key = der.toString('base64');
     await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
+
+    // This run measures the network rules, so the staged copy registers no
+    // content scripts. With them, a site's own scriptlets act on the probe
+    // page: `no-fetch-if` on one origin swallowed every probe before it reached
+    // the network, and each showed up as a request "uBO blocks and we do not"
+    // although a rule for it was sitting in the ruleset, never asked.
+    await writeFile(join(STAGED, 'cosmetic', 'registrations.json'), '[]', 'utf8');
 
     await writeFile(join(STAGED, 'collector.html'),
         '<!doctype html><meta charset="utf-8"><title>collector</title>', 'utf8');

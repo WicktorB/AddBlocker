@@ -5,6 +5,6 @@
   "type": "module",
   "main": "src/index.ts",
   "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@addblocker/filter-parser": "workspace:*" },
+  "dependencies": { "@addblocker/filter-parser": "workspace:*", "@addblocker/cosmetic-runtime": "workspace:*" },
   "devDependencies": { "vitest": "^3.0.0" }
 }

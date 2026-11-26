@@ -8,7 +8,12 @@
  *
  * Injection uses `addInitScript`, which runs before the page's own scripts in
  * the page's world — the same position a userscript manager gives it at
- * `document-start` with `@grant none` / `@inject-into page`.
+ * `document-start` with `@grant none` when the page allows injection.
+ *
+ * Runs in Chromium by default. `USERSCRIPT_BROWSER=webkit` runs the same checks
+ * in WebKit, the engine behind Safari on iOS and the one this script is
+ * actually for: a selector WebKit refuses to parse silently disables every
+ * other selector in its rule, and only WebKit can show that.
  */
 
 import { createServer, type Server } from 'node:http';
@@ -16,7 +21,7 @@ import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { chromium, webkit, type BrowserContext } from 'playwright-core';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
@@ -72,11 +77,15 @@ async function pickCosmeticCases(limit: number): Promise<Case[]> {
  * others silently did nothing.
  */
 async function pickGenericIds(): Promise<{ first: string; last: string; total: number }> {
-    const sheet = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    const code = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    // Only the plain hide list: the file also carries gated selectors and the
+    // per-site exception index, neither of which is "the sheet" — and probing
+    // a gated selector's anchor would hide the rest of the test page.
+    const payload = JSON.parse(/^const G = (.*);$/m.exec(code)?.[1] ?? '{}') as { hide?: string[] };
+    const sheet = JSON.stringify(payload.hide ?? []);
     const ids = [...sheet.matchAll(/"#([A-Za-z][\w-]{2,40})"/g)].map((m) => m[1]);
     if (ids.length < 2) throw new Error('not enough plain id selectors in the generic sheet');
-    const hides = /"hide":\[(.*?)\],"style"/s.exec(sheet);
-    const total = hides === null ? ids.length : hides[1].split('","').length;
+    const total = payload.hide?.length ?? ids.length;
     return { first: ids[0], last: ids[ids.length - 1], total };
 }
 
@@ -103,6 +112,52 @@ async function pickScriptletCase(): Promise<{ domain: string; property: string; 
         }
     }
     throw new Error('no usable set-constant invocation found');
+}
+
+/** A site exception to a plain generic selector, and a gated selector. */
+async function pickGenericRuleCases(): Promise<{
+    exception: { domain: string; selector: string } | null;
+    gatedAnchor: string | null;
+}> {
+    const code = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    const payload = JSON.parse(/^const G = (.*);$/m.exec(code)?.[1] ?? '{}') as {
+        gated?: Array<[string, string]>;
+    };
+    const exceptions = JSON.parse(/^const X = (.*);$/m.exec(code)?.[1] ?? '{}') as Record<string, string[]>;
+
+    let exception: { domain: string; selector: string } | null = null;
+    for (const [domain, selectors] of Object.entries(exceptions)) {
+        const selector = selectors.find((sel) => /^[.#][A-Za-z][\w-]*$/.test(sel));
+        if (selector !== undefined) { exception = { domain, selector }; break; }
+    }
+    const gated = (payload.gated ?? []).find(([anchor, selector]) =>
+        /^#[A-Za-z][\w-]*$/.test(anchor) && selector === `${anchor} ~ *`);
+    return { exception, gatedAnchor: gated === undefined ? null : gated[0] };
+}
+
+/** Names the script must never leave on the page's `window`. */
+const PRIVATE_NAMES = [
+    'SEL', 'STY', 'INV', 'ROW', 'DOM', 'GCSS', 'GS', 'GP', 'GG', 'GX', 'GXD',
+    '__addblocker', '__addblockerScriptlets', '__abCosmetic', '__abScriptlets',
+];
+
+/**
+ * Sends every hostname to the local server.
+ *
+ * Chromium can do this with a resolver flag; WebKit has no equivalent, so
+ * there the requests are answered from here instead. The page still believes
+ * it is on the hostname it asked for, which is all the userscript looks at.
+ */
+async function mapAllHosts(context: BrowserContext, port: number): Promise<void> {
+    await context.route('**/*', async (route) => {
+        const url = new URL(route.request().url());
+        const response = await fetch(`http://127.0.0.1:${port}${url.pathname}${url.search}`);
+        await route.fulfill({
+            status: response.status,
+            contentType: 'text/html',
+            body: await response.text(),
+        });
+    });
 }
 
 function startServer(genericFirst: string, genericLast: string): Promise<{ server: Server; port: number }> {
@@ -142,14 +197,37 @@ async function main(): Promise<void> {
     const scriptletCase = await pickScriptletCase();
     const { server, port } = await startServer(generic.first, generic.last);
 
-    const browser = await chromium.launch({
-        executablePath: resolveChromium(),
-        headless: true,
-        args: [
-            `--host-resolver-rules=MAP * 127.0.0.1:${port},EXCLUDE localhost`,
-            '--no-sandbox', '--disable-gpu',
-        ],
-    });
+    const rules = await pickGenericRuleCases();
+
+    const useWebkit = process.env.USERSCRIPT_BROWSER === 'webkit';
+    console.log(`Browser: ${useWebkit ? 'WebKit' : 'Chromium'}`);
+    const browser = useWebkit
+        ? await webkit.launch({ headless: true })
+        : await chromium.launch({
+            executablePath: resolveChromium(),
+            headless: true,
+            args: [
+                `--host-resolver-rules=MAP * 127.0.0.1:${port},EXCLUDE localhost`,
+                '--no-sandbox', '--disable-gpu',
+            ],
+        });
+    const newContext = async (content: string): Promise<BrowserContext> => {
+        const created = await browser.newContext();
+        if (useWebkit) await mapAllHosts(created, port);
+        await created.addInitScript({ content });
+        return created;
+    };
+    /** Whether `selector` is on the page and takes up space. */
+    const shown = async (context: BrowserContext, host: string, sel: string, probe: string): Promise<boolean> => {
+        const page = await context.newPage();
+        await page.goto(`http://${host}:${port}/?sel=${encodeURIComponent(sel)}`, { waitUntil: 'load' });
+        const visible = await page.evaluate((selector) => {
+            const el = document.querySelector(selector);
+            return el !== null && el.getBoundingClientRect().height > 0;
+        }, probe);
+        await page.close();
+        return visible;
+    };
 
     let failed = false;
     const check = (ok: boolean, label: string, detail = ''): void => {
@@ -158,8 +236,17 @@ async function main(): Promise<void> {
     };
 
     try {
-        const context = await browser.newContext();
-        await context.addInitScript({ content: script });
+        console.log('\nHeader');
+        for (const [name, text] of [['full', script], ['light', lightScript]] as const) {
+            const version = /^\/\/ @version\s+(\S+)$/m.exec(text)?.[1] ?? '';
+            check(/^\d{4}\.\d{3,4}\.\d{1,4}$/.test(version),
+                `${name}: the version changes with each build`, `got "${version}"`);
+            check(/^\/\/ @inject-into\s+auto$/m.test(text),
+                `${name}: @inject-into auto, so a strict CSP does not stop the script`);
+            check(!/^\/\/ @noframes/m.test(text), `${name}: no @noframes, so iframes are covered`);
+        }
+
+        const context = await newContext(script);
 
         console.log('\nPer-site hiding');
         for (const testCase of cases) {
@@ -202,6 +289,44 @@ async function main(): Promise<void> {
         check(genericState.last, `#${generic.last} is hidden (last of the sheet)`);
         check(genericState.sentinelVisible, 'other content is untouched');
 
+        console.log('\nGeneric rules');
+        const lightRules = await newContext(lightScript);
+        if (rules.exception === null) {
+            console.log('  SKIP  no site exception to a plain generic selector in this build');
+        } else {
+            const { domain, selector } = rules.exception;
+            check(await shown(context, domain, selector, selector),
+                `${domain}#@#${selector} — left visible on that site`);
+            check(!(await shown(context, 'no-rules-9f3a2b.test', selector, selector)),
+                `${selector} is hidden everywhere else`);
+            check(!(await shown(context, domain, selector, `#${generic.first}`)),
+                `${domain} still gets the rest of the generic sheet`);
+            check(await shown(lightRules, domain, selector, selector),
+                `light build: ${domain}#@#${selector} — left visible on that site`);
+        }
+        if (rules.gatedAnchor === null) {
+            console.log('  SKIP  no gated selector with an id anchor in this build');
+        } else {
+            // The page puts the probed element first and #sentinel after it, so
+            // `#anchor ~ *` hides the sentinel exactly when the anchor exists.
+            const anchor = rules.gatedAnchor;
+            check(!(await shown(context, 'no-rules-9f3a2b.test', anchor, '#sentinel')),
+                `${anchor} ~ * — applied once ${anchor} is on the page`);
+            check(!(await shown(lightRules, 'no-rules-9f3a2b.test', anchor, '#sentinel')),
+                `light build: ${anchor} ~ * — applied once ${anchor} is on the page`);
+        }
+        await lightRules.close();
+
+        console.log('\nNothing left on the page');
+        const leakPage = await context.newPage();
+        await leakPage.goto(`http://${cases[0].domain}:${port}/?sel=.nothing`, { waitUntil: 'load' });
+        const leaked = await leakPage.evaluate(
+            (names) => names.filter((name) => name in window), PRIVATE_NAMES,
+        );
+        await leakPage.close();
+        check(leaked.length === 0, 'the script defines no global the page can see',
+            leaked.length === 0 ? '' : `found ${leaked.join(', ')}`);
+
         console.log('\nScriptlets, in the page\'s own world');
         const scriptletPage = await context.newPage();
         await scriptletPage.goto(`http://${scriptletCase.domain}:${port}/?sel=.nothing`,
@@ -216,8 +341,7 @@ async function main(): Promise<void> {
             `got "${observed}"`);
 
         console.log('\nThe light build');
-        const lightContext = await browser.newContext();
-        await lightContext.addInitScript({ content: lightScript });
+        const lightContext = await newContext(lightScript);
         const lightPage = await lightContext.newPage();
         await lightPage.goto(`http://no-rules-9f3a2b.test:${port}/?sel=.nothing`, { waitUntil: 'load' });
         const lightState = await lightPage.evaluate((ids) => {

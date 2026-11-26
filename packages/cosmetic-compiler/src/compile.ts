@@ -13,12 +13,64 @@
  */
 
 import type { CosmeticFilter } from '@addblocker/filter-parser';
+import { hideRules } from '@addblocker/cosmetic-runtime/css';
 
 export interface DomainPayload {
     hide: string[];
     style: Array<[string, string]>;
     procedural: string[];
     exceptions: string[];
+    /** `[anchor, selector]` pairs injected only once the anchor exists. */
+    gated?: Array<[string, string]>;
+}
+
+/**
+ * Finds the selectors whose subject is "anything", and what they hang off.
+ *
+ * `#overlay ~ *` reads as a narrow rule and matches as the widest one there
+ * is. The style engine works right to left: the subject `*` is a candidate on
+ * every element, and each candidate then walks its preceding siblings looking
+ * for `#overlay`. On a page of 5 000 sibling nodes that is twelve million
+ * steps, on every page visited, for a rule aimed at one scam site. Measured in
+ * Chromium, a single such selector in the generic sheet took style
+ * recalculation from 22 ms to 134 ms — more than the 13 000 class and id
+ * selectors beside it, which are hashed and cost about a millisecond together.
+ *
+ * Returns the part before the last combinator — the anchor — when the last
+ * compound selector names no tag, class, id or attribute; `null` otherwise.
+ * The runtime tests for the anchor, which is cheap, and only injects the full
+ * selector on pages where it is found.
+ */
+export function splitUniversalTail(selector: string): string | null {
+    let depth = 0;
+    let quote = '';
+    let lastCombinator = -1;
+
+    for (let i = 0; i < selector.length; i += 1) {
+        const ch = selector[i];
+        if (quote !== '') {
+            if (ch === '\\') i += 1;
+            else if (ch === quote) quote = '';
+            continue;
+        }
+        if (ch === '"' || ch === "'") { quote = ch; continue; }
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === '(' || ch === '[') { depth += 1; continue; }
+        if (ch === ')' || ch === ']') { depth -= 1; continue; }
+        if (depth !== 0) continue;
+        // A selector list has several subjects; leave those in the sheet.
+        if (ch === ',') return null;
+        if (ch === ' ' || ch === '>' || ch === '+' || ch === '~') lastCombinator = i;
+    }
+
+    if (lastCombinator === -1) return null;
+
+    const tail = selector.slice(lastCombinator + 1).trim();
+    const universal = tail === '*' || /^\*?:(?:not|is|where)\(/.test(tail);
+    if (!universal) return null;
+
+    const anchor = selector.slice(0, lastCombinator + 1).replace(/[\s>+~]+$/, '').trim();
+    return anchor === '' ? null : anchor;
 }
 
 export interface Bucket {
@@ -33,6 +85,16 @@ export interface CosmeticCompileResult {
     buckets: Bucket[];
     /** Selectors applying to every site. */
     generic: DomainPayload;
+    /**
+     * Per-domain exceptions that name a *generic* selector.
+     *
+     * `example.com#@#.ad-banner` means "the generic `.ad-banner` rule does not
+     * apply here". The generic sheet is built without knowing which site it
+     * will land on, so it needs this index to honour them — without it the
+     * exception only ever filtered the site's own selectors, never the generic
+     * ones it was written against.
+     */
+    genericExceptions: Record<string, string[]>;
     stats: {
         inputFilters: number;
         genericSelectors: number;
@@ -43,6 +105,10 @@ export interface CosmeticCompileResult {
         buckets: number;
         /** Filters dropped because DNR/CSS cannot express them. */
         skipped: number;
+        /** Generic selectors held back until their anchor appears. */
+        gatedSelectors: number;
+        /** Site exceptions that target a generic selector. */
+        genericExceptionPairs: number;
     };
 }
 
@@ -128,7 +194,10 @@ export function compileCosmetic(filters: CosmeticFilter[]): CosmeticCompileResul
         }
 
         if (filter.isGeneric) {
-            addTo(generic, filter);
+            const anchor = filter.kind === 'hide' && !filter.isProcedural
+                ? splitUniversalTail(filter.selector) : null;
+            if (anchor !== null) (generic.gated ??= []).push([anchor, filter.selector]);
+            else addTo(generic, filter);
             continue;
         }
 
@@ -167,6 +236,29 @@ export function compileCosmetic(filters: CosmeticFilter[]): CosmeticCompileResul
     }
 
     const deduped = dedupePayload(generic);
+    if (generic.gated !== undefined) {
+        const seen = new Set<string>();
+        deduped.gated = generic.gated.filter(([, selector]) => {
+            if (seen.has(selector)) return false;
+            seen.add(selector);
+            return true;
+        });
+    }
+
+    const genericSelectors = new Set<string>([
+        ...deduped.hide, ...deduped.procedural,
+        ...deduped.style.map(([selector]) => selector),
+        ...(deduped.gated ?? []).map(([, selector]) => selector),
+    ]);
+    const genericExceptions: Record<string, string[]> = {};
+    let genericExceptionPairs = 0;
+    for (const domain of domains) {
+        const hits = [...new Set(byDomain.get(domain)?.exceptions ?? [])]
+            .filter((selector) => genericSelectors.has(selector));
+        if (hits.length === 0) continue;
+        genericExceptions[domain] = hits;
+        genericExceptionPairs += hits.length;
+    }
     const specificPairs = [...byDomain.values()]
         .reduce((n, p) => n + p.hide.length + p.style.length + p.procedural.length, 0);
     const proceduralSelectors = deduped.procedural.length
@@ -175,6 +267,7 @@ export function compileCosmetic(filters: CosmeticFilter[]): CosmeticCompileResul
     return {
         buckets,
         generic: deduped,
+        genericExceptions,
         stats: {
             inputFilters: filters.length,
             genericSelectors: deduped.hide.length + deduped.style.length + deduped.procedural.length,
@@ -185,6 +278,8 @@ export function compileCosmetic(filters: CosmeticFilter[]): CosmeticCompileResul
             domains: byDomain.size,
             buckets: buckets.length,
             skipped,
+            gatedSelectors: deduped.gated?.length ?? 0,
+            genericExceptionPairs,
         },
     };
 }
@@ -229,11 +324,69 @@ if (found) rt.apply(merged);
 `;
 }
 
-/** Emits the generic script applied to every site. */
-export function renderGeneric(payload: DomainPayload): string {
+/**
+ * Emits the generic stylesheet as a file.
+ *
+ * Registered as extension CSS, the browser applies it itself: no script runs,
+ * the parsed sheet is shared by every frame instead of being rebuilt from a
+ * 240 kB string in each one, and the page has no `<style>` element to remove.
+ * It carries everything that is the same on every site — the plain hide and
+ * restyle rules, minus the list's own global exceptions.
+ */
+export function renderGenericCss(generic: DomainPayload): string {
+    const exempt = new Set(generic.exceptions);
+    const rules = hideRules(generic.hide.filter((selector) => !exempt.has(selector)));
+    for (const [selector, declaration] of generic.style) {
+        if (!exempt.has(selector)) rules.push(`${selector}{${declaration}}`);
+    }
+    return `${rules.join('\n')}\n`;
+}
+
+/**
+ * Emits the script that accompanies the generic stylesheet.
+ *
+ * It carries only what a static sheet cannot: procedural selectors and the
+ * gated ones. On a typical build that is a few hundred bytes.
+ */
+export function renderGenericDynamic(generic: DomainPayload): string {
+    const payload: DomainPayload = {
+        hide: [], style: [],
+        procedural: generic.procedural,
+        exceptions: generic.exceptions,
+        ...(generic.gated !== undefined ? { gated: generic.gated } : {}),
+    };
     return `(() => {
 const rt = globalThis.__addblocker;
 if (rt) rt.apply(${JSON.stringify(payload)});
+})();
+`;
+}
+
+/**
+ * Emits the full generic script, for the sites that have exceptions to it.
+ *
+ * A static stylesheet cannot leave one selector out on one site, so the sites
+ * with a `#@#` aimed at a generic selector are excluded from the sheet and get
+ * this instead: the whole generic payload, filtered by the exceptions for the
+ * current hostname.
+ */
+export function renderGeneric(
+    payload: DomainPayload,
+    genericExceptions: Record<string, string[]> = {},
+): string {
+    return `(() => {
+const rt = globalThis.__addblocker;
+if (!rt) return;
+const G = ${JSON.stringify(payload)};
+const X = ${JSON.stringify(genericExceptions)};
+let host = location.hostname;
+// Walk up the domain: an exception on example.com covers www.example.com too.
+while (host.includes('.')) {
+  const x = X[host];
+  if (x) G.exceptions.push(...x);
+  host = host.slice(host.indexOf('.') + 1);
+}
+rt.apply(G);
 })();
 `;
 }

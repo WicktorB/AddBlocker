@@ -22,8 +22,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as esbuild } from 'esbuild';
 
-import { parseCosmeticList } from '@addblocker/filter-parser';
+import { USERSCRIPT_ENV, parseCosmeticList, preprocess } from '@addblocker/filter-parser';
 import { compileCosmetic, type DomainPayload } from '@addblocker/cosmetic-compiler';
+import { HIDE_DECLARATION, SELECTORS_PER_RULE } from '@addblocker/cosmetic-runtime/css';
 import {
     compileScriptlets, parseScriptletList, type Invocation,
 } from '@addblocker/scriptlet-compiler';
@@ -36,7 +37,20 @@ const OUT_DIR = join(ROOT, 'userscript');
 const COSMETIC_RUNTIME = join(ROOT, 'packages', 'cosmetic-runtime', 'src', 'apply.ts');
 const SCRIPTLET_RUNTIME = join(ROOT, 'packages', 'scriptlet-runtime', 'src', 'run.ts');
 
-const VERSION = '1.0.0';
+/**
+ * Derived from the build time, as `YYYY.MMDD.HHmm`.
+ *
+ * A userscript manager only fetches `@updateURL` when the version there is
+ * higher than the installed one. With a constant version every installed copy
+ * would have kept its first set of lists for ever, however often this file was
+ * regenerated — and the lists are the whole point of regenerating it.
+ */
+function buildVersion(now: Date): string {
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    return `${now.getUTCFullYear()}.${now.getUTCMonth() + 1}${pad(now.getUTCDate())}.`
+        + `${now.getUTCHours()}${pad(now.getUTCMinutes())}`;
+}
+const VERSION = buildVersion(new Date());
 // Points at main, not at a feature branch: this URL is baked into every
 // installed copy as @updateURL, and a branch deleted after merging would make
 // updates stop without a word — the worst way to fail, since the user would go
@@ -70,11 +84,23 @@ class Pool {
 async function readLists(): Promise<string[]> {
     const files = (await readdir(CACHE_DIR)).filter((f) => f.endsWith('.txt')).sort();
     if (files.length === 0) throw new Error(`no lists in ${CACHE_DIR} — run pnpm build first`);
-    return Promise.all(files.map((f) => readFile(join(CACHE_DIR, f), 'utf8')));
+    const raws = await Promise.all(files.map((f) => readFile(join(CACHE_DIR, f), 'utf8')));
+    // Same directive resolution as the extension, for a different target: this
+    // build keeps the mobile and Safari branches the extension leaves out.
+    return raws.map((raw) => preprocess(raw, USERSCRIPT_ENV).text);
 }
 
-/** Bundles a runtime the way the extension does, so behaviour is identical. */
-async function bundle(entry: string): Promise<string> {
+/**
+ * Bundles a runtime the way the extension does, so behaviour is identical —
+ * except for where it publishes itself.
+ *
+ * In the extension each runtime hangs its entry point on `globalThis`, which
+ * there is the isolated world's. Here the script can be running in the page's
+ * own world, where a global named `__addblocker` is one `in window` test away
+ * from telling the site an ad blocker is present. The assignment is redirected
+ * to a variable local to the userscript's wrapper function instead.
+ */
+async function bundle(entry: string, global: string, local: string): Promise<string> {
     const result = await esbuild({
         entryPoints: [entry],
         bundle: true,
@@ -82,8 +108,21 @@ async function bundle(entry: string): Promise<string> {
         target: 'safari15',
         minify: true,
         write: false,
+        define: { [`globalThis.${global}`]: local },
     });
-    return result.outputFiles[0].text;
+    const code = result.outputFiles[0].text;
+    if (code.includes(global)) throw new Error(`${global} still leaks from the bundled runtime`);
+    return code;
+}
+
+/** Separates pooled entries. Lists are line-based, so no entry contains one. */
+const LINE = '\n';
+
+/** Packs a pool into one string, split again in the page only if needed. */
+function pack(items: string[], what: string): string {
+    const bad = items.find((item) => item.includes(LINE));
+    if (bad !== undefined) throw new Error(`${what} entry contains a line break: ${JSON.stringify(bad)}`);
+    return JSON.stringify(items.join(LINE));
 }
 
 interface Row {
@@ -110,6 +149,14 @@ function encodeRow(row: Row): string {
 }
 
 function header(title: string, description: string, file: string): string {
+    // `@inject-into auto`: the page's world where the site allows it, which is
+    // what scriptlets need; the content world where a strict Content Security
+    // Policy forbids injected scripts — there `page` would have meant the
+    // script did not run at all, losing the cosmetic half along with the rest.
+    //
+    // No `@noframes` line: to most managers the directive is a flag, so even
+    // `@noframes false` switched the script off in iframes, which is where a
+    // good share of the ads are.
     return `// ==UserScript==
 // @name         ${title}
 // @namespace    https://github.com/WicktorB/AddBlocker
@@ -119,8 +166,7 @@ function header(title: string, description: string, file: string): string {
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
-// @inject-into  page
-// @noframes     false
+// @inject-into  auto
 // @downloadURL  ${REPO}/${file}
 // @updateURL    ${REPO}/${file}
 // ==/UserScript==
@@ -137,6 +183,27 @@ function header(title: string, description: string, file: string): string {
  * Engendré depuis EasyList, EasyPrivacy et uAssets.
  */
 `;
+}
+
+const HIDE_RULE_END = `{${HIDE_DECLARATION}}`;
+
+/**
+ * The generic sheet, laid out so the page can use it two ways.
+ *
+ * As is, it is valid CSS and goes straight into a `<style>` — the path taken on
+ * nearly every page, with no per-selector work at all. Its selectors are also
+ * separated by `,\n` and nothing else, so on the few sites that carry an
+ * exception to a generic selector it can be taken apart again, filtered and
+ * rebuilt, without shipping the selector list a second time.
+ */
+function genericSheet(generic: DomainPayload): string {
+    const exempt = new Set(generic.exceptions);
+    const selectors = generic.hide.filter((selector) => !exempt.has(selector));
+    const groups: string[] = [];
+    for (let start = 0; start < selectors.length; start += SELECTORS_PER_RULE) {
+        groups.push(`${selectors.slice(start, start + SELECTORS_PER_RULE).join(',\n')}${HIDE_RULE_END}`);
+    }
+    return groups.join('\n');
 }
 
 async function main(): Promise<void> {
@@ -182,82 +249,125 @@ async function main(): Promise<void> {
     }
 
     const generic: DomainPayload = cosmetic.generic;
-    const genericHide = generic.hide.map((s) => selectors.ref(s)).join(',');
-    const genericProcedural = generic.procedural.map((s) => selectors.ref(s)).join(',');
 
     // Lists are written as `a.com,b.com,c.com##.ad`, so a great many domains
     // end up with byte-identical rows. Interning them turns the table's values
     // into a short index each.
     const rowPool = new Pool();
-    const table: Record<string, string> = {};
+    const table: string[] = [];
     for (const [domain, row] of rows) {
         const encoded = encodeRow(row);
-        if (encoded !== '') table[domain] = rowPool.ref(encoded);
+        if (encoded !== '') table.push(`${domain}=${rowPool.ref(encoded)}`);
     }
+    // One string, searched with indexOf: `\ndomain=ref\n`. The leading and
+    // trailing separators make every entry findable the same way.
+    const domainIndex = JSON.stringify(`${LINE}${table.join(LINE)}${LINE}`);
 
-    const cosmeticRuntime = await bundle(COSMETIC_RUNTIME);
-    const scriptletRuntime = await bundle(SCRIPTLET_RUNTIME);
+    const cosmeticRuntime = await bundle(COSMETIC_RUNTIME, '__addblocker', '__abCosmetic');
+    const scriptletRuntime = await bundle(SCRIPTLET_RUNTIME, '__addblockerScriptlets', '__abScriptlets');
+
+    // What every page needs, in every build.
+    const genericData = `var GCSS=${JSON.stringify(genericSheet(generic))};\n`
+        + `var GS=${JSON.stringify(generic.style)};\n`
+        + `var GP=${JSON.stringify(generic.procedural)};\n`
+        + `var GG=${JSON.stringify(generic.gated ?? [])};\n`
+        + `var GX=${JSON.stringify(generic.exceptions)};\n`;
 
     /**
      * The dispatcher, written as plain source rather than bundled: it is short,
      * and it has to stay readable for anyone who opens the file to see what is
      * running on every page they visit.
+     *
+     * Its one rule is to touch as little as it can. The tables are a megabyte
+     * and a half of text; turned into arrays they were eleven megabytes of
+     * heap on every page, including the great majority where no site rule
+     * applies. So they stay text: the domain index is searched in place, and
+     * a pool is only split when a row for the current site actually needs it.
      */
     const dispatcher = (withDomains: boolean): string => `
-(function () {
   var U = ${JSON.stringify(UNIT)};
-  var d = function (s) {
+  var END = ${JSON.stringify(HIDE_RULE_END)};
+  var refs = function (s) {
     if (!s) return [];
     var out = [], parts = s.split(',');
     for (var i = 0; i < parts.length; i++) out.push(parseInt(parts[i], 36));
     return out;
   };
-  var pick = function (refs, pool) {
-    var out = [];
-    for (var i = 0; i < refs.length; i++) out.push(pool[refs[i]]);
-    return out;
-  };
 
-  var merged = { hide: [], style: [], procedural: [], exceptions: [] };
+  var merged = { hide: [], style: GS.slice(), procedural: GP.slice(), exceptions: GX.slice(), gated: GG };
   var calls = [];
-
-  merged.hide = pick(d(GH), SEL);
-  merged.procedural = pick(d(GP), SEL);
 ${withDomains ? `
   // Walk up the hostname: a rule on example.com covers www.example.com too.
+  var rowRefs = [];
   var host = location.hostname;
   while (host.indexOf('.') !== -1) {
-    var ref = DOM[host];
-    if (ref !== undefined) {
-      var f = ROW[parseInt(ref, 36)].split(';');
-      merged.hide = merged.hide.concat(pick(d(f[0]), SEL));
-      merged.procedural = merged.procedural.concat(pick(d(f[1]), SEL));
-      merged.exceptions = merged.exceptions.concat(pick(d(f[2]), SEL));
-      var st = d(f[3]);
-      for (var i = 0; i < st.length; i++) {
-        var pair = STY[st[i]].split(U);
-        merged.style.push([pair[0], pair[1]]);
-      }
-      var sc = d(f[4]);
-      for (var j = 0; j < sc.length; j++) calls.push(INV[sc[j]].split(U));
+    var at = DOM.indexOf('\\n' + host + '=');
+    if (at !== -1) {
+      var from = at + host.length + 2;
+      rowRefs.push(parseInt(DOM.slice(from, DOM.indexOf('\\n', from)), 36));
     }
     host = host.slice(host.indexOf('.') + 1);
   }
 
+  if (rowRefs.length) {
+    var rowList = ROW.split('\\n'), sel = null, sty = null, inv = null;
+    var pick = function (list) {
+      if (!list.length) return [];
+      if (sel === null) sel = SEL.split('\\n');
+      var out = [];
+      for (var i = 0; i < list.length; i++) out.push(sel[list[i]]);
+      return out;
+    };
+    for (var r = 0; r < rowRefs.length; r++) {
+      var f = rowList[rowRefs[r]].split(';');
+      merged.hide = merged.hide.concat(pick(refs(f[0])));
+      merged.procedural = merged.procedural.concat(pick(refs(f[1])));
+      merged.exceptions = merged.exceptions.concat(pick(refs(f[2])));
+      var st = refs(f[3]);
+      if (st.length && sty === null) sty = STY.split('\\n');
+      for (var i = 0; i < st.length; i++) {
+        var pair = sty[st[i]].split(U);
+        merged.style.push([pair[0], pair[1]]);
+      }
+      var sc = refs(f[4]);
+      if (sc.length && inv === null) inv = INV.split('\\n');
+      for (var j = 0; j < sc.length; j++) calls.push(inv[sc[j]].split(U));
+    }
+  }
+
   // Scriptlets first: they hook globals the page's own scripts will read, so
   // every millisecond before those scripts run is the point of them.
-  if (calls.length && globalThis.__addblockerScriptlets) {
-    globalThis.__addblockerScriptlets.run(calls);
+  if (calls.length && __abScriptlets) __abScriptlets.run(calls);
+` : `
+  // No per-site rules in this build, but a site's exceptions to the generic
+  // sheet still have to hold, or it would hide what the lists say to leave.
+  var host = location.hostname;
+  while (host.indexOf('.') !== -1) {
+    var x = GXD[host];
+    if (x) merged.exceptions = merged.exceptions.concat(x);
+    host = host.slice(host.indexOf('.') + 1);
   }
-` : ''}
+`}
+  // The generic sheet. If nothing on this site is excepted beyond what the
+  // sheet was already built without, it is used exactly as shipped. Otherwise
+  // it is taken apart so the exceptions can remove their selectors.
+  if (merged.exceptions.length === GX.length) {
+    merged.css = GCSS;
+  } else {
+    var groups = GCSS.split(END), all = [];
+    for (var g = 0; g < groups.length; g++) {
+      var group = groups[g].replace(/^\\n/, '');
+      if (group) all = all.concat(group.split(',\\n'));
+    }
+    merged.hide = all.concat(merged.hide);
+  }
+
   // The cosmetic runtime assumes document.documentElement exists — true for a
   // content script at document_start, false here: a userscript manager can run
   // us before <html> is parsed, and appending the stylesheet would throw. So
   // wait for the element if it is not there yet, via an observer rather than a
   // timer, to lose no time at all.
-  var go = function () {
-    if (globalThis.__addblocker) globalThis.__addblocker.apply(merged);
-  };
+  var go = function () { if (__abCosmetic) __abCosmetic.apply(merged); };
   if (document.documentElement) {
     go();
   } else {
@@ -265,8 +375,13 @@ ${withDomains ? `
       if (document.documentElement) { observer.disconnect(); go(); }
     }).observe(document, { childList: true });
   }
-})();
 `;
+
+    // Everything lives inside one function. Depending on the manager and on
+    // \`@inject-into\`, top-level \`var\`s of a userscript can become properties
+    // of the page's \`window\` — seven of them, here, with names like \`SEL\` and
+    // \`DOM\`, visible to the site and free to collide with its own globals.
+    const wrap = (body: string): string => `(function () {\nvar __abCosmetic, __abScriptlets;\n${body}})();\n`;
 
     await mkdir(OUT_DIR, { recursive: true });
 
@@ -274,48 +389,39 @@ ${withDomains ? `
         'AddBlocker (cosmétique + scriptlets)',
         'Masque les publicités et neutralise les murs anti-adblock. Ne bloque pas le réseau.',
         'addblocker.user.js',
-    ) + `${scriptletRuntime}\n${cosmeticRuntime}\n`
-        + `var SEL=${JSON.stringify(selectors.items)};\n`
-        + `var STY=${JSON.stringify(styles.items)};\n`
-        + `var INV=${JSON.stringify(invocations.items)};\n`
-        + `var GH=${JSON.stringify(genericHide)};\n`
-        + `var GP=${JSON.stringify(genericProcedural)};\n`
-        + `var ROW=${JSON.stringify(rowPool.items)};\n`
-        + `var DOM=${JSON.stringify(table)};\n`
-        + dispatcher(true);
+    ) + wrap(`${scriptletRuntime}\n${cosmeticRuntime}\n`
+        + genericData
+        + `var SEL=${pack(selectors.items, 'selector')};\n`
+        + `var STY=${pack(styles.items, 'style')};\n`
+        + `var INV=${pack(invocations.items, 'invocation')};\n`
+        + `var ROW=${pack(rowPool.items, 'row')};\n`
+        + `var DOM=${domainIndex};\n`
+        + dispatcher(true));
 
     // The generic sheet alone is a fraction of the size and still removes a
     // great deal, which matters on a phone where the payload is parsed on every
     // page load.
-    const genericOnlySelectors = [...new Set([
-        ...generic.hide, ...generic.procedural,
-    ])];
-    const lightPool = new Pool();
-    const lightHide = generic.hide.map((s) => lightPool.ref(s)).join(',');
-    const lightProcedural = generic.procedural.map((s) => lightPool.ref(s)).join(',');
-    void genericOnlySelectors;
-
     const light = header(
         'AddBlocker Léger (générique)',
         'Masquage générique seulement — plus petit, sans règles par site.',
         'addblocker-lite.user.js',
-    ) + `${cosmeticRuntime}\n`
-        + `var SEL=${JSON.stringify(lightPool.items)};\n`
-        + `var GH=${JSON.stringify(lightHide)};\n`
-        + `var GP=${JSON.stringify(lightProcedural)};\n`
-        + dispatcher(false);
+    ) + wrap(`${cosmeticRuntime}\n`
+        + genericData
+        + `var GXD=${JSON.stringify(cosmetic.genericExceptions)};\n`
+        + dispatcher(false));
 
     await writeFile(join(OUT_DIR, 'addblocker.user.js'), full, 'utf8');
     await writeFile(join(OUT_DIR, 'addblocker-lite.user.js'), light, 'utf8');
 
     const kb = (text: string): string => `${(text.length / 1024).toFixed(0)} kB`;
     console.log('Pools');
-    console.log(`  selectors:   ${selectors.items.length} unique (${kb(JSON.stringify(selectors.items))})`);
-    console.log(`  invocations: ${invocations.items.length} unique (${kb(JSON.stringify(invocations.items))})`);
+    console.log(`  generic:     ${generic.hide.length} selectors, ${generic.gated?.length ?? 0} gated`);
+    console.log(`  selectors:   ${selectors.items.length} unique (${kb(pack(selectors.items, 'selector'))})`);
+    console.log(`  invocations: ${invocations.items.length} unique (${kb(pack(invocations.items, 'invocation'))})`);
     console.log(`  styles:      ${styles.items.length} unique`);
-    console.log(`  rows:        ${rowPool.items.length} unique (${kb(JSON.stringify(rowPool.items))})`);
-    console.log(`  domains:     ${Object.keys(table).length} (${kb(JSON.stringify(table))})`);
-    console.log('\nWritten');
+    console.log(`  rows:        ${rowPool.items.length} unique (${kb(pack(rowPool.items, 'row'))})`);
+    console.log(`  domains:     ${table.length} (${kb(domainIndex)})`);
+    console.log(`\nWritten (version ${VERSION})`);
     console.log(`  addblocker.user.js       ${kb(full)}`);
     console.log(`  addblocker-lite.user.js  ${kb(light)}`);
 }

@@ -96,7 +96,7 @@ L'approche prévue — un `match pattern` par domaine dans le manifest — **ne 
 
 - **`:has()` reste en CSS.** Natif dans Chrome depuis la 105, c'est la pseudo-classe « procédurale » la plus fréquente (728 occurrences). La laisser au moteur CSS évite l'essentiel du travail JS ; seuls `:has-text()` (241) et la longue traîne passent par le moteur procédural.
 - **Un `*` en position de domaine est un générique**, pas un domaine littéral. Traité littéralement il produit le pattern `*://*.*/*`, que Chrome refuse — en refusant l'extension entière.
-- **Coût du générique mesuré** : 234 kB injectés sur chaque page, 36 ms jusqu'à `DOMContentLoaded`. Acceptable, mais c'est le premier candidat à l'optimisation (n'injecter que les sélecteurs dont la classe/l'id existe réellement).
+- **Coût du générique mesuré** : 234 kB injectés sur chaque page, 36 ms jusqu'à `DOMContentLoaded`. L'optimisation envisagée ici — n'injecter que les sélecteurs dont la classe ou l'id existe réellement — s'est révélée sans objet une fois mesurée : voir la phase 7.
 
 ### Limite assumée
 
@@ -303,6 +303,47 @@ C'est le genre de défaut qu'aucune relecture n'attrape : le filtre est syntaxiq
 Il n'a pas pu tourner ici : le proxy refuse le CONNECT vers le web ouvert. Le pipeline est validé de bout en bout contre un serveur local (uBO 2, nous 2, aucune casse), mais **la distribution du trafic réel n'est pas celle d'un corpus synthétique** : requêtes générées après exécution de scripts, URL dynamiques, première partie mêlée à la troisième. Le 100 % ci-dessus mesure la fidélité de la traduction des filtres, pas le comportement sur une page de presse chargée.
 
 ---
+
+## Phase 7 — Audit de performance et de justesse ✅
+
+Un audit du code, mesures à l'appui dans Chromium (page synthétique de 5 000 éléments), a trouvé deux bugs de justesse et un coût mal attribué.
+
+### Le coût n'était pas où on le cherchait
+
+La phase 2 désignait les 13 700 sélecteurs génériques comme premier candidat à l'optimisation. Mesuré, c'est faux : les 13 137 sélecteurs simples (classes, ids) coûtent **1,5 ms** à eux tous, parce que le moteur de style les range dans une table de hachage. Un seul sélecteur, `#cmdTextDisplay ~ *` (liste badware), coûtait **112 ms** : son sujet est « n'importe quel élément », et chacun remonte ses frères précédents à la recherche de l'ancre.
+
+Les sélecteurs génériques dont le dernier composant ne nomme rien sont maintenant **différés** : le runtime teste la présence de l'ancre (une simple recherche) et n'injecte le sélecteur que sur les pages où elle existe.
+
+| Calcul de style, page de 5 000 éléments | Avant | Après |
+|---|---|---|
+| Sans rien | 22 ms | 22 ms |
+| Extension, feuille générique | ~210 ms | 39 ms |
+| Userscript complet | 177 ms | 40 ms |
+
+### Deux bugs de justesse
+
+- **Les exceptions par site ne touchaient pas la feuille générique.** `example.com#@#.ad-banner` ne filtrait que les sélecteurs propres au site, jamais le sélecteur générique qu'elle vise : 69 exceptions sur 443 étaient sans effet, et l'élément restait masqué à tort. Le build produit maintenant un index des exceptions visant un sélecteur générique.
+- **Les directives `!#if` étaient ignorées.** Les listes uBO contiennent 154 blocs conditionnels (`env_firefox`, `env_mobile`, `cap_html_filtering`…) ; toutes les branches étaient appliquées à la fois, y compris les deux côtés d'un `!#else`. Elles sont maintenant résolues avant tout parsing, avec un environnement par cible : celui d'uBO Lite pour l'extension, mobile et Safari pour le userscript. 292 lignes sortent du build de l'extension.
+
+### Le reste
+
+- **La feuille générique est un fichier CSS de l'extension**, plus une chaîne construite par un script dans chaque cadre. Le navigateur l'applique seul et la partage entre les iframes ; les 63 sites qui portent une exception générique reçoivent à la place la version scriptée, filtrée.
+- **Le service worker ne resynchronise plus à chaque réveil.** Un identifiant de build (hash de `registrations.json`) lui dit en une lecture de stockage si les enregistrements sont déjà les bons. Les synchronisations sont sérialisées, ce qui supprime une course à l'installation.
+- **Le moteur procédural ne s'arrête plus après dix secondes** — il ralentit seulement —, donc les contenus chargés en défilement infini sont traités. Il lit `textContent` et non `innerText`, qui forçait une mise en page à chaque mutation.
+- **Userscript** : tables conservées en texte et décodées seulement pour le site courant (JS 9,0 → 0,8 ms, mémoire 9,2 → 5,0 Mo par page), tout dans une seule fonction sans variable globale visible par la page, `@inject-into auto`, plus de `@noframes`, version datée, groupes de 100 sélecteurs au lieu de 1 000.
+
+### Trois erreurs de harnais trouvées en chemin
+
+Chacune faisait passer un comportement correct pour un écart :
+
+1. L'oracle sondait avec `fetch()` des requêtes déclarées comme `script` : une règle `$script` les ignorait à raison.
+2. La parité chargeait nos scriptlets sur la page de sonde : `no-fetch-if` y avalait les requêtes avant le réseau.
+3. Les sondes « premier et dernier id de la feuille » lisaient tout le fichier, index d'exceptions compris.
+
+### Ce qui reste
+
+- **WebKit** : `userscript-check` sait tourner dans WebKit et la CI le fait, mais ce n'est pas Safari iOS sur un vrai téléphone.
+- Deux écarts de parité subsistent, antérieurs à cette phase : `||0.0.0.0^$third-party,domain=~[::1]…` (écarté par le garde-fou IPv6) et `*$frame,1p,from=…`.
 
 ## Décisions actées
 
