@@ -14,6 +14,9 @@ importers:
 
   packages/cosmetic-compiler:
     dependencies:
+      '@addblocker/cosmetic-runtime':
+        specifier: workspace:*
+        version: link:../cosmetic-runtime
       '@addblocker/filter-parser':
         specifier: workspace:*
         version: link:../filter-parser
@@ -138,6 +141,9 @@ importers:
 
   tools/oracle-diff:
     devDependencies:
+      '@addblocker/filter-parser':
+        specifier: workspace:*
+        version: link:../../packages/filter-parser
       '@adguard/tsurlfilter':
         specifier: 5.0.1
         version: 5.0.1(@adguard/re2-wasm@1.2.0)
@@ -153,6 +159,9 @@ importers:
 
   tools/parity:
     devDependencies:
+      '@addblocker/filter-parser':
+        specifier: workspace:*
+        version: link:../../packages/filter-parser
       '@gorhill/ubo-core':
         specifier: ^0.1.30
         version: 0.1.30

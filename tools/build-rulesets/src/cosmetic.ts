@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 import { parseCosmeticList } from '@addblocker/filter-parser';
-import { compileCosmetic, renderBucket, renderGeneric } from '@addblocker/cosmetic-compiler';
+import {
+    compileCosmetic, renderBucket, renderGeneric, renderGenericCss, renderGenericDynamic,
+} from '@addblocker/cosmetic-compiler';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const RUNTIME_ENTRY = join(ROOT, 'packages', 'cosmetic-runtime', 'src', 'apply.ts');
@@ -30,7 +32,11 @@ export interface ContentScriptEntry {
 export interface DynamicRegistration {
     id: string;
     matches: string[];
-    js: string[];
+    /** Where this script must not run, independently of the user's settings. */
+    excludeMatches?: string[];
+    js?: string[];
+    /** Stylesheets the browser applies itself, with no script involved. */
+    css?: string[];
     runAt: 'document_start';
     allFrames: boolean;
     persistAcrossSessions: boolean;
@@ -42,6 +48,10 @@ export interface CosmeticBuildResult {
     stats: ReturnType<typeof compileCosmetic>['stats'] & {
         runtimeBytes: number;
         genericBytes: number;
+        /** The script shipped beside the generic sheet on every page. */
+        genericDynamicBytes: number;
+        /** Sites served the scripted generic payload instead of the sheet. */
+        genericExceptionDomains: number;
         bucketBytes: number;
         manifestPatterns: number;
         dynamicPatterns: number;
@@ -110,8 +120,23 @@ export async function buildCosmetic(listContents: string[], outDir: string): Pro
     const runtimeCode = bundled.outputFiles[0].text;
     await writeFile(join(cosmeticDir, 'runtime.js'), runtimeCode, 'utf8');
 
-    const genericCode = renderGeneric(result.generic);
+    // The generic rules ship twice, for two kinds of site.
+    //
+    // Everywhere but a handful of sites, they are a stylesheet the browser
+    // applies on its own, plus a tiny script for what a sheet cannot express.
+    // On the sites that carry an exception to a generic selector, the sheet is
+    // excluded and a script builds the same rules minus those exceptions.
+    const genericCss = renderGenericCss(result.generic);
+    await writeFile(join(cosmeticDir, 'generic.css'), genericCss, 'utf8');
+
+    const genericDynamic = renderGenericDynamic(result.generic);
+    const hasDynamic = result.generic.procedural.length > 0
+        || (result.generic.gated?.length ?? 0) > 0;
+    if (hasDynamic) await writeFile(join(cosmeticDir, 'generic-dynamic.js'), genericDynamic, 'utf8');
+
+    const genericCode = renderGeneric(result.generic, result.genericExceptions);
     await writeFile(join(cosmeticDir, 'generic.js'), genericCode, 'utf8');
+    const exceptionPatterns = Object.keys(result.genericExceptions).map(matchPattern);
 
     const registrations: DynamicRegistration[] = [];
     let bucketBytes = 0;
@@ -140,11 +165,24 @@ export async function buildCosmetic(listContents: string[], outDir: string): Pro
     registrations.push({
         id: 'generic',
         matches: ['*://*/*'],
-        js: ['cosmetic/runtime.js', 'cosmetic/generic.js'],
+        ...(exceptionPatterns.length > 0 ? { excludeMatches: exceptionPatterns } : {}),
+        css: ['cosmetic/generic.css'],
+        ...(hasDynamic ? { js: ['cosmetic/runtime.js', 'cosmetic/generic-dynamic.js'] } : {}),
         runAt: 'document_start',
         allFrames: true,
         persistAcrossSessions: true,
     });
+
+    if (exceptionPatterns.length > 0) {
+        registrations.push({
+            id: 'generic-exceptions',
+            matches: exceptionPatterns,
+            js: ['cosmetic/runtime.js', 'cosmetic/generic.js'],
+            runAt: 'document_start',
+            allFrames: true,
+            persistAcrossSessions: true,
+        });
+    }
 
     // Registered unconditionally rather than when the first filter appears:
     // adding one script to an existing registration set costs seconds
@@ -163,7 +201,12 @@ export async function buildCosmetic(listContents: string[], outDir: string): Pro
     const contentScripts: ContentScriptEntry[] = [];
 
     assertPatternsValid(contentScripts);
-    assertPatternsValid(registrations.map((r) => ({ ...r, run_at: 'document_start' as const, all_frames: true })));
+    assertPatternsValid(registrations.map((r) => ({
+        matches: [...r.matches, ...(r.excludeMatches ?? [])],
+        js: r.js ?? [],
+        run_at: 'document_start' as const,
+        all_frames: true,
+    })));
 
     const manifestPatterns = contentScripts.reduce((n, c) => n + c.matches.length, 0);
     if (manifestPatterns > MANIFEST_PATTERN_BUDGET) {
@@ -185,7 +228,9 @@ export async function buildCosmetic(listContents: string[], outDir: string): Pro
         stats: {
             ...result.stats,
             runtimeBytes: runtimeCode.length,
-            genericBytes: genericCode.length,
+            genericBytes: genericCss.length,
+            genericDynamicBytes: hasDynamic ? genericDynamic.length : 0,
+            genericExceptionDomains: exceptionPatterns.length,
             bucketBytes,
             manifestPatterns,
             dynamicPatterns: registrations.reduce((n, r) => n + r.matches.length, 0),

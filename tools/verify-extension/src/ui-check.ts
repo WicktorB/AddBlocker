@@ -53,7 +53,12 @@ async function pickBlockedDomain(): Promise<string> {
  * hard-coded so the check keeps testing something real as lists change.
  */
 async function pickGenericIds(): Promise<{ first: string; last: string }> {
-    const sheet = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    const code = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    // Only the plain hide list: the file also carries gated selectors and the
+    // per-site exception index, neither of which is "the sheet" — and probing
+    // a gated selector's anchor would hide the rest of the test page.
+    const payload = JSON.parse(/^const G = (.*);$/m.exec(code)?.[1] ?? '{}') as { hide?: string[] };
+    const sheet = JSON.stringify(payload.hide ?? []);
     const ids = [...sheet.matchAll(/"#([A-Za-z][\w-]{2,40})"/g)].map((m) => m[1]);
     if (ids.length < 2) throw new Error('not enough plain id selectors in the generic sheet');
     // The last one matters as much as the first: Blink stops matching a

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseCosmeticFilter } from '@addblocker/filter-parser';
-import { compileCosmetic, renderBucket, isUsableDomain } from '../src/index.js';
+import {
+    compileCosmetic, renderBucket, renderGeneric, renderGenericCss, renderGenericDynamic,
+    isUsableDomain, splitUniversalTail,
+} from '../src/index.js';
 
 const compileLines = (...lines: string[]) => {
     const filters = lines.map((line) => {
@@ -117,5 +120,83 @@ describe('generated bucket code', () => {
         const match = /^const P = (\{.*\});$/m.exec(code);
         expect(match).not.toBeNull();
         expect(() => JSON.parse(match![1])).not.toThrow();
+    });
+});
+
+describe('splitUniversalTail', () => {
+    it('finds the anchor of a selector whose subject is anything', () => {
+        expect(splitUniversalTail('#overlay ~ *')).toBe('#overlay');
+        expect(splitUniversalTail('.wall > *')).toBe('.wall');
+        expect(splitUniversalTail('body > #gate + *')).toBe('body > #gate');
+        expect(splitUniversalTail('#gate ~ :not(.keep)')).toBe('#gate');
+    });
+
+    it('leaves alone a selector whose subject names something', () => {
+        expect(splitUniversalTail('.ad')).toBeNull();
+        expect(splitUniversalTail('#a ~ .b')).toBeNull();
+        expect(splitUniversalTail('div > a[href*="x"]')).toBeNull();
+        expect(splitUniversalTail('#a ~ div:not(.b)')).toBeNull();
+    });
+
+    it('is not fooled by combinators inside brackets, quotes or functions', () => {
+        expect(splitUniversalTail('a[title="x ~ *"]')).toBeNull();
+        expect(splitUniversalTail('div:has(> *)')).toBeNull();
+        expect(splitUniversalTail('[data-x="a > b"] ~ *')).toBe('[data-x="a > b"]');
+    });
+
+    it('leaves selector lists and bare universals in the sheet', () => {
+        expect(splitUniversalTail('#a ~ *, .b')).toBeNull();
+        expect(splitUniversalTail('*')).toBeNull();
+    });
+});
+
+describe('gated generic selectors', () => {
+    it('keeps a universal-subject generic selector out of the plain sheet', () => {
+        const result = compileLines('###overlay ~ *', '##.advert');
+        expect(result.generic.hide).toEqual(['.advert']);
+        expect(result.generic.gated).toEqual([['#overlay', '#overlay ~ *']]);
+        expect(renderGenericCss(result.generic)).not.toContain('~ *');
+        expect(renderGenericDynamic(result.generic)).toContain('"gated":[["#overlay","#overlay ~ *"]]');
+    });
+
+    it('does not gate a site-specific selector', () => {
+        const result = compileLines('example.com###overlay ~ *');
+        expect(payloadFor(result, 'example.com').hide).toEqual(['#overlay ~ *']);
+    });
+});
+
+describe('exceptions to generic selectors', () => {
+    it('indexes a site exception that names a generic selector', () => {
+        const result = compileLines('##.advert', 'example.com#@#.advert', 'example.com#@#.own');
+        expect(result.genericExceptions).toEqual({ 'example.com': ['.advert'] });
+        expect(result.stats.genericExceptionPairs).toBe(1);
+    });
+
+    it('does not index an exception to a site-specific selector', () => {
+        const result = compileLines('example.com##.own', 'example.com#@#.own');
+        expect(result.genericExceptions).toEqual({});
+    });
+
+    it('applies the exception when the scripted generic payload runs on that site', () => {
+        const result = compileLines('##.advert', '##.banner', 'example.com#@#.advert');
+        const code = renderGeneric(result.generic, result.genericExceptions);
+
+        const run = (hostname: string) => {
+            let applied: { hide: string[]; exceptions: string[] } | undefined;
+            const globals = { __addblocker: { apply: (p: typeof applied) => { applied = p; } } };
+            // eslint-disable-next-line @typescript-eslint/no-implied-eval
+            new Function('globalThis', 'location', code)(globals, { hostname });
+            return applied;
+        };
+
+        expect(run('www.example.com')?.exceptions).toContain('.advert');
+        expect(run('other.org')?.exceptions).not.toContain('.advert');
+    });
+
+    it('leaves the list\'s own global exceptions out of the static sheet', () => {
+        const result = compileLines('##.advert', '##.banner', '#@#.banner');
+        const css = renderGenericCss(result.generic);
+        expect(css).toContain('.advert');
+        expect(css).not.toContain('.banner');
     });
 });

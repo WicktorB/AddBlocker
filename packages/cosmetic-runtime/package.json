@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "main": "src/apply.ts",
-  "exports": { ".": "./src/apply.ts", "./procedural": "./src/procedural.ts" },
+  "exports": { ".": "./src/apply.ts", "./procedural": "./src/procedural.ts", "./css": "./src/css.ts" },
   "devDependencies": { "vitest": "^3.0.0", "esbuild": "^0.24.0" }
 }

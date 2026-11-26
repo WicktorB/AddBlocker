@@ -6,12 +6,13 @@
  * mode is to silently disable an entire ruleset, so it must be caught here.
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseList } from '@addblocker/filter-parser';
+import { EXTENSION_ENV, parseList, preprocess } from '@addblocker/filter-parser';
 import { compile, validateRuleset } from '@addblocker/dnr-compiler';
 
 import { QUOTAS, RULESETS, type Ruleset } from './catalog.js';
@@ -62,8 +63,11 @@ interface BuiltRuleset {
     compression: number;
 }
 
-/** Raw list text, kept so the cosmetic build reuses the same downloads. */
+/** List text after preprocessing, kept so the cosmetic build reuses it. */
 const rawLists: string[] = [];
+
+/** What resolving the `!#if` directives removed, for the build report. */
+const directives = { blocks: 0, droppedLines: 0, malformed: 0 };
 
 async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     const contents: string[] = [];
@@ -79,6 +83,17 @@ async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     if (contents.length === 0) {
         console.warn(`  ! ${ruleset.id}: no sources available, skipped`);
         return null;
+    }
+
+    // Resolve `!#if` blocks before anything is parsed, so the network, cosmetic
+    // and scriptlet compilers all work from the same lines — the ones meant
+    // for this environment, not every branch at once.
+    for (let i = 0; i < contents.length; i += 1) {
+        const resolved = preprocess(contents[i], EXTENSION_ENV);
+        contents[i] = resolved.text;
+        directives.blocks += resolved.blocks;
+        directives.droppedLines += resolved.droppedLines;
+        directives.malformed += resolved.malformed;
     }
 
     rawLists.push(...contents);
@@ -184,6 +199,10 @@ async function main(): Promise<void> {
             `${result.ruleset.enabledByDefault ? 'on' : 'off'} by default`);
     }
 
+    console.log(`\n  directives: ${directives.blocks} conditional block(s), ` +
+        `${directives.droppedLines} line(s) left out as not meant for this environment` +
+        (directives.malformed > 0 ? `, ${directives.malformed} unparseable` : ''));
+
     console.log('\nBuilding cosmetic filtering');
     const cosmetic = await buildCosmetic(rawLists, OUT_DIR);
     console.log(`  ${cosmetic.stats.domains} domains in ${cosmetic.stats.buckets} buckets, ` +
@@ -191,8 +210,12 @@ async function main(): Promise<void> {
     console.log(`  ${cosmetic.stats.genericSelectors} generic, ` +
         `${cosmetic.stats.proceduralSelectors} procedural, ${cosmetic.stats.exceptions} exceptions`);
     console.log(`  skipped: ${cosmetic.stats.skipped} (generic selectors carrying domain exclusions)`);
+    console.log(`  gated: ${cosmetic.stats.gatedSelectors} generic selector(s) held back until their anchor exists`);
+    console.log(`  generic exceptions: ${cosmetic.stats.genericExceptionPairs} on ` +
+        `${cosmetic.stats.genericExceptionDomains} site(s), served the scripted sheet`);
     console.log(`  payload: runtime ${(cosmetic.stats.runtimeBytes / 1024).toFixed(0)}kB, ` +
-        `generic ${(cosmetic.stats.genericBytes / 1024).toFixed(0)}kB, ` +
+        `generic sheet ${(cosmetic.stats.genericBytes / 1024).toFixed(0)}kB ` +
+        `(+ ${cosmetic.stats.genericDynamicBytes} bytes of script), ` +
         `buckets ${(cosmetic.stats.bucketBytes / 1024).toFixed(0)}kB total`);
     console.log(`  patterns: ${cosmetic.stats.manifestPatterns} in the manifest, ` +
         `${cosmetic.stats.dynamicPatterns} registered dynamically (adr/0002)`);
@@ -217,14 +240,12 @@ async function main(): Promise<void> {
 
     // Cosmetic buckets run in the isolated world, scriptlets in the page's own.
     const registrations = [...cosmetic.registrations, ...scriptlets.registrations];
-    await writeFile(
-        join(OUT_DIR, 'cosmetic', 'registrations.json'),
-        JSON.stringify(registrations),
-        'utf8',
-    );
+    const registrationsJson = JSON.stringify(registrations);
+    await writeFile(join(OUT_DIR, 'cosmetic', 'registrations.json'), registrationsJson, 'utf8');
+    const buildId = createHash('sha256').update(registrationsJson).digest('hex').slice(0, 16);
 
     console.log('\nBuilding UI');
-    const ui = await buildUi(OUT_DIR);
+    const ui = await buildUi(OUT_DIR, buildId);
     console.log(`  service worker ${(ui.workerBytes / 1024).toFixed(0)}kB, ` +
         `${ui.assets.length} assets (popup, options, picker)`);
 

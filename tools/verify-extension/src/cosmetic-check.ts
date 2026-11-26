@@ -96,6 +96,52 @@ async function collectCases(): Promise<Case[]> {
     return cases;
 }
 
+interface GenericCases {
+    /** A site exception to a plain generic selector, with markup matching it. */
+    exception: { domain: string; selector: string; html: string } | null;
+    /** A generic selector nobody excepts, to prove the rest still applies. */
+    plain: { selector: string; html: string };
+    /** A gated selector of the form `#id ~ *`. */
+    gated: { anchor: string; selector: string } | null;
+}
+
+/** Draws the generic-rule cases from the build, like the bucket cases. */
+async function pickGenericCases(): Promise<GenericCases> {
+    const code = await readFile(join(BUILT, 'cosmetic', 'generic.js'), 'utf8');
+    const payload = JSON.parse(/^const G = (.*);$/m.exec(code)?.[1] ?? '{}') as {
+        hide?: string[]; gated?: Array<[string, string]>;
+    };
+    const exceptions = JSON.parse(/^const X = (.*);$/m.exec(code)?.[1] ?? '{}') as Record<string, string[]>;
+
+    const simple = /^[.#][A-Za-z][\w-]*$/;
+    const markup = (selector: string): string => (selector.startsWith('#')
+        ? `<div id="${selector.slice(1)}">target</div>`
+        : `<div class="${selector.slice(1)}">target</div>`);
+
+    let exception: GenericCases['exception'] = null;
+    const excepted = new Set<string>();
+    for (const [domain, selectors] of Object.entries(exceptions)) {
+        for (const selector of selectors) {
+            excepted.add(selector);
+            if (exception === null && simple.test(selector)) {
+                exception = { domain, selector, html: markup(selector) };
+            }
+        }
+    }
+
+    const plainSelector = (payload.hide ?? []).find((s) => simple.test(s) && !excepted.has(s));
+    if (plainSelector === undefined) throw new Error('no plain generic selector in the build');
+
+    const gatedPair = (payload.gated ?? []).find(([anchor, selector]) =>
+        /^#[A-Za-z][\w-]*$/.test(anchor) && selector === `${anchor} ~ *`);
+
+    return {
+        exception,
+        plain: { selector: plainSelector, html: markup(plainSelector) },
+        gated: gatedPair === undefined ? null : { anchor: gatedPair[0], selector: gatedPair[1] },
+    };
+}
+
 async function stageExtension(): Promise<string> {
     await rm(STAGED, { recursive: true, force: true });
     await cp(BUILT, STAGED, { recursive: true });
@@ -127,7 +173,10 @@ function startServer(cases: Case[]): Promise<{ server: Server; port: number }> {
     const server = createServer((req, res) => {
         const host = (req.headers.host ?? '').split(':')[0];
         const forHost = byDomain.get(host) ?? [];
-        const body = forHost.map((c, i) => `<div id="probe-${i}">${c.html}</div>`).join('\n');
+        // `?html=` serves markup of the caller's choosing, for the checks that
+        // need a specific element on a specific host.
+        const raw = new URL(req.url ?? '/', 'http://x').searchParams.get('html');
+        const body = raw ?? forHost.map((c, i) => `<div id="probe-${i}">${c.html}</div>`).join('\n');
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end(`<!doctype html><meta charset="utf-8"><title>cosmetic</title>
 <style>body{margin:0}</style>
@@ -238,6 +287,59 @@ async function main(): Promise<void> {
                 `${result.sentinelVisible ? '' : ' SENTINEL HIDDEN (over-hiding)'}`);
 
             await page.close();
+        }
+
+        console.log('\nGeneric rules');
+        const generic = await pickGenericCases();
+        const visible = async (host: string, html: string, selector: string, waitMs = 400): Promise<boolean> => {
+            const page = await context.newPage();
+            await page.goto(`http://${host}:${port}/?html=${encodeURIComponent(html)}`, { waitUntil: 'load' });
+            await page.waitForTimeout(waitMs);
+            const shown = await page.evaluate((sel: string) => {
+                const el = document.querySelector(sel);
+                return el !== null && el.getBoundingClientRect().height > 0;
+            }, selector);
+            await page.close();
+            return shown;
+        };
+        const report = (ok: boolean, label: string): void => {
+            if (!ok) failed = true;
+            console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label}`);
+        };
+
+        // An exception to a generic selector has to hold on its site and
+        // nowhere else. It used to hold nowhere: the generic sheet was built
+        // without the per-site exceptions, so the element stayed hidden.
+        if (generic.exception === null) {
+            console.log('  SKIP  no site exception to a plain generic selector in this build');
+        } else {
+            const { domain, selector, html } = generic.exception;
+            report(await visible(domain, html, selector),
+                `${domain}#@#${selector} — the excepted element stays visible on that site`);
+            report(!(await visible('no-rules-7c1e.test', html, selector)),
+                `${selector} is still hidden everywhere else`);
+            const other = generic.plain;
+            report(!(await visible(domain, other.html, other.selector)),
+                `${domain} still gets the rest of the generic sheet (${other.selector})`);
+        }
+
+        // A gated selector must do nothing until its anchor exists, then apply.
+        if (generic.gated === null) {
+            console.log('  SKIP  no gated selector with an id anchor in this build');
+        } else {
+            const { anchor, selector } = generic.gated;
+            const id = anchor.slice(1);
+            report(!(await visible('no-rules-7c1e.test',
+                `<div id="${id}">anchor</div><p id="after">after the anchor</p>`, '#after')),
+                `${selector} — applied once ${anchor} is on the page`);
+            report(await visible('no-rules-7c1e.test', '<p id="after">no anchor here</p>', '#after'),
+                `${selector} — inert on a page without ${anchor}`);
+            // Inserted well after load, as a script-built overlay would be.
+            report(!(await visible('no-rules-7c1e.test',
+                `<p id="after">anchor arrives late</p><script>setTimeout(() => {
+                    const a = document.createElement('div'); a.id = ${JSON.stringify(id)};
+                    document.body.prepend(a); }, 600);</script>`, '#after', 1500)),
+                `${selector} — applied when ${anchor} is inserted after load`);
         }
 
         // Cost of the generic sheet, which lands on every page.

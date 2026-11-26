@@ -32,6 +32,22 @@ const SETTINGS_KEY = 'settings';
 const APPLIED_EXCLUSIONS_KEY = 'appliedExcludeMatches';
 /** Kills last applied, so restoring a rule can name it explicitly. */
 const APPLIED_KILLS_KEY = 'appliedKilledRules';
+/** Build whose registrations are currently in place. */
+const SYNCED_BUILD_KEY = 'syncedBuildId';
+
+/**
+ * Identifies the set of content-script registrations this build ships — a hash
+ * of `registrations.json`, substituted at build time.
+ *
+ * A service worker is not a long-lived process: Chrome stops it after thirty
+ * idle seconds and starts it again for the next event. Every one of those
+ * starts used to re-read the 1.4 MB registration file and ask Chrome for all
+ * 58 000 registered match patterns, only to conclude that nothing had changed.
+ * Comparing this against what was last synchronised answers the same question
+ * with one storage read.
+ */
+declare const __BUILD_ID__: string | undefined;
+const BUILD_ID = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : '';
 
 declare const chrome: typeof globalThis extends { chrome: infer C } ? C : any;
 
@@ -47,12 +63,18 @@ export async function saveSettings(settings: Settings): Promise<void> {
 /**
  * Registers the generated bucket scripts, honouring disabled sites.
  *
- * Returns whether the exclusions ended up applied, so the caller only records
- * them as such when they really are.
+ * `rebuild` replaces every registration instead of only adding the missing
+ * ones. It is needed when the build changed: a script that kept its id can
+ * have new match patterns or new files, and an id-based diff would leave the
+ * old definition in place.
+ *
+ * Returns whether the registrations ended up as wanted, so the caller only
+ * records them as such when they really are.
  */
 async function syncContentScripts(
     excludeMatches: string[],
     exclusionsChanged: boolean,
+    rebuild: boolean,
 ): Promise<boolean> {
     let wanted: Array<Record<string, unknown>>;
     try {
@@ -63,12 +85,28 @@ async function syncContentScripts(
         return false;
     }
 
-    const withExclusions = wanted.map((script) => ({
-        ...script,
-        ...(excludeMatches.length > 0 ? { excludeMatches } : {}),
-    }));
+    // A script can ship with exclusions of its own — the generic stylesheet
+    // stays off the sites that have exceptions to it — and the user's disabled
+    // sites are added to those, never substituted for them.
+    const withExclusions = wanted.map((script) => {
+        const own = (script.excludeMatches as string[] | undefined) ?? [];
+        const merged = [...own, ...excludeMatches];
+        const { excludeMatches: _dropped, ...rest } = script;
+        return merged.length > 0 ? { ...rest, excludeMatches: merged } : rest;
+    });
 
-    const existing = await chrome.scripting.getRegisteredContentScripts();
+    let existing = await chrome.scripting.getRegisteredContentScripts();
+
+    if (rebuild && existing.length > 0) {
+        try {
+            await chrome.scripting.unregisterContentScripts();
+            existing = [];
+        } catch (err) {
+            console.error('[addblocker] clearing registrations failed:', err);
+            return false;
+        }
+    }
+
     const existingIds = new Set(existing.map((script: { id: string }) => script.id));
     const wantedIds = new Set(withExclusions.map((script) => script.id as string));
 
@@ -98,7 +136,10 @@ async function syncContentScripts(
     if (present.length > 0 && exclusionsChanged) {
         try {
             await chrome.scripting.updateContentScripts(
-                present.map((script) => ({ id: script.id, excludeMatches })),
+                present.map((script) => ({
+                    id: script.id,
+                    excludeMatches: (script as { excludeMatches?: string[] }).excludeMatches ?? [],
+                })),
             );
         } catch (err) {
             console.error('[addblocker] updating exclusions failed:', err);
@@ -211,13 +252,29 @@ async function syncKilledRules(settings: Settings): Promise<void> {
     await chrome.storage.local.set({ [APPLIED_KILLS_KEY]: killed });
 }
 
-async function applyFastSettings(settings: Settings): Promise<void> {
-    await Promise.all([
-        syncDynamicRules(settings),
-        syncRulesets(settings),
-        syncUserCosmetic(settings),
-        syncKilledRules(settings),
-    ]);
+/**
+ * Serialises the fast half.
+ *
+ * `updateDynamicRules` removes every rule and adds the new set. Two of those
+ * interleaved — at install, when `onInstalled` and the worker's own start-up
+ * both fire — can each read the same "existing" rules and then both try to add
+ * the same ids, which Chrome rejects. One at a time, the second simply
+ * replaces what the first wrote.
+ */
+let fastSync: Promise<void> = Promise.resolve();
+
+function applyFastSettings(settings: Settings): Promise<void> {
+    fastSync = fastSync.then(async () => {
+        await Promise.all([
+            syncDynamicRules(settings),
+            syncRulesets(settings),
+            syncUserCosmetic(settings),
+            syncKilledRules(settings),
+        ]);
+    }).catch((err: unknown) => {
+        console.error('[addblocker] settings sync failed:', err);
+    });
+    return fastSync;
 }
 
 /**
@@ -228,14 +285,35 @@ async function applyFastSettings(settings: Settings): Promise<void> {
  */
 let scriptSync: Promise<void> = Promise.resolve();
 
-function syncScripts(settings: Settings): Promise<void> {
+/** Set once this worker instance has checked the registrations against Chrome. */
+let verifiedThisLifetime = false;
+
+/**
+ * Brings the registered content scripts in line with the build and settings.
+ *
+ * The expensive path — read the registration file, list what Chrome holds,
+ * diff — runs only when something can have changed: the build, the user's
+ * exclusions, or (`verify`) a browser start, the one moment worth confirming
+ * that Chrome still holds what we registered. An ordinary worker wake-up with
+ * the same build and the same exclusions returns after one storage read.
+ */
+function syncScripts(settings: Settings, verify = false): Promise<void> {
     scriptSync = scriptSync.then(async () => {
         const excludeMatches = buildExcludeMatches(settings);
-        const stored = await chrome.storage.local.get(APPLIED_EXCLUSIONS_KEY);
+        const stored = await chrome.storage.local.get([APPLIED_EXCLUSIONS_KEY, SYNCED_BUILD_KEY]);
         const changed = exclusionsDiffer(stored[APPLIED_EXCLUSIONS_KEY], excludeMatches);
+        const sameBuild = BUILD_ID !== '' && stored[SYNCED_BUILD_KEY] === BUILD_ID;
 
-        if (await syncContentScripts(excludeMatches, changed)) {
-            await chrome.storage.local.set({ [APPLIED_EXCLUSIONS_KEY]: excludeMatches });
+        if (sameBuild && !changed && (!verify || verifiedThisLifetime)) return;
+
+        // The exclusions are written with the registrations when rebuilding,
+        // so they only need a separate pass when the build is unchanged.
+        if (await syncContentScripts(excludeMatches, changed && sameBuild, !sameBuild)) {
+            verifiedThisLifetime = true;
+            await chrome.storage.local.set({
+                [APPLIED_EXCLUSIONS_KEY]: excludeMatches,
+                [SYNCED_BUILD_KEY]: BUILD_ID,
+            });
         }
     }).catch((err: unknown) => {
         console.error('[addblocker] script sync failed:', err);
@@ -252,11 +330,14 @@ export async function applySettings(): Promise<void> {
     void syncScripts(settings);
 }
 
-/** Awaits everything — used at install time, where there is no user waiting. */
-export async function applySettingsFully(): Promise<void> {
+/**
+ * Awaits everything — used at install and start-up, where no user is waiting.
+ * `verify` additionally confirms the registrations against Chrome.
+ */
+export async function applySettingsFully(verify = false): Promise<void> {
     const settings = await loadSettings();
     await applyFastSettings(settings);
-    await syncScripts(settings);
+    await syncScripts(settings, verify);
 }
 
 /**
@@ -415,9 +496,12 @@ chrome.runtime.onMessage.addListener((message: { type: string; payload?: unknown
     return true;
 });
 
-// At install and start-up nobody is waiting, so take the time to finish.
-chrome.runtime.onInstalled.addListener(() => { void applySettingsFully(); });
-chrome.runtime.onStartup.addListener(() => { void applySettingsFully(); });
+// At install and start-up nobody is waiting, so take the time to confirm that
+// Chrome holds the registrations it should.
+chrome.runtime.onInstalled.addListener(() => { void applySettingsFully(true); });
+chrome.runtime.onStartup.addListener(() => { void applySettingsFully(true); });
 
 trackMatches();
+// Every other wake-up: settings are re-asserted, and the registrations are
+// left alone unless the build or the exclusions changed.
 void applySettingsFully();

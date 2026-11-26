@@ -20,7 +20,12 @@ export interface UiBuildResult {
     assets: string[];
 }
 
-export async function buildUi(outDir: string): Promise<UiBuildResult> {
+/**
+ * `buildId` identifies the content-script registrations this build ships. It is
+ * compiled into the worker so it can tell, without reading them, whether the
+ * registrations Chrome holds are already this build's.
+ */
+export async function buildUi(outDir: string, buildId: string): Promise<UiBuildResult> {
     await mkdir(outDir, { recursive: true });
 
     // IIFE, not ESM: a classic service worker rejects `export` statements
@@ -34,6 +39,7 @@ export async function buildUi(outDir: string): Promise<UiBuildResult> {
         target: 'chrome111',
         minify: false,
         write: false,
+        define: { __BUILD_ID__: JSON.stringify(buildId) },
     });
     const workerCode = bundled.outputFiles[0].text;
     await writeFile(join(outDir, 'sw.js'), workerCode, 'utf8');
