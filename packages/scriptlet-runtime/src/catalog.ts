@@ -1,15 +1,29 @@
 /**
  * Scriptlet catalogue.
  *
- * Covers the scriptlets the filter lists actually invoke: the 22 implemented
- * here account for ~95% of the 7 131 invocations across EasyList, EasyPrivacy
- * and uAssets. Unknown names are reported rather than silently ignored.
+ * Covers the scriptlets the filter lists actually invoke. Unknown names are
+ * reported by the build rather than silently ignored — and the count that
+ * matters is not how many invocations are covered but which: the handful that
+ * rewrite a video player's API responses are a rounding error by number and
+ * the whole of what removes ads on the sites that use them.
  *
- * Each runs in the page's own world at document_start, before the site's
- * scripts — which is the only moment where hooking a global still works.
+ * Most run in the page's own world at document_start, before the site's
+ * scripts — the only moment where hooking a global still works. A few only
+ * need the DOM and run in the extension's isolated world instead (`worldOf`).
  */
 
-import { abort, currentScriptText, definePath, matcher, resolveValue } from './helpers.js';
+import { abort, armAbort, currentScriptText, definePath, matcher, resolveValue } from './helpers.js';
+import { removeNodeText, replaceNodeText } from './node-text.js';
+import { hasOwn } from './safe.js';
+import {
+    adjustSetInterval, adjustSetTimeout, editInboundObject, jsonEdit, jsonPrune, setConstant,
+    trustedEditInboundObject, trustedJsonEdit, trustedPreventDomBypass, trustedSetConstant,
+} from './objects.js';
+import {
+    jsonEditFetchResponse, jsonEditXhrResponse, jsonPruneFetchResponse, jsonPruneXhrResponse,
+    trustedJsonEditFetchResponse, trustedJsonEditXhrResponse, trustedReplaceFetchResponse,
+    trustedReplaceXhrResponse,
+} from './responses.js';
 
 export type Scriptlet = (...args: string[]) => void;
 
@@ -31,8 +45,15 @@ export const ALIASES: Record<string, string> = {
     nowoif: 'no-window-open-if',
     'prevent-window-open': 'no-window-open-if',
     rmnt: 'remove-node-text',
-    'nano-sib': 'nano-setInterval-booster',
-    'nano-stb': 'nano-setTimeout-booster',
+    'nano-sib': 'adjust-setInterval',
+    'nano-setInterval-booster': 'adjust-setInterval',
+    'nano-stb': 'adjust-setTimeout',
+    'nano-setTimeout-booster': 'adjust-setTimeout',
+    rpnt: 'trusted-replace-node-text',
+    'replace-node-text': 'trusted-replace-node-text',
+    'trusted-rpnt': 'trusted-replace-node-text',
+    'trusted-rpfr': 'trusted-replace-fetch-response',
+    'trusted-set': 'trusted-set-constant',
     aost: 'abort-on-stack-trace',
     'trusted-set-cookie': 'set-cookie',
     'trusted-set-local-storage-item': 'set-local-storage-item',
@@ -52,6 +73,7 @@ function setCookie(name: string, value: string, path = '/'): void {
 export const CATALOG: Record<string, Scriptlet> = {
     'abort-on-property-read': (path) => {
         if (!path) return;
+        armAbort();
         definePath(window, path, (owner, prop) => {
             try {
                 Object.defineProperty(owner, prop, {
@@ -65,6 +87,7 @@ export const CATALOG: Record<string, Scriptlet> = {
 
     'abort-on-property-write': (path) => {
         if (!path) return;
+        armAbort();
         definePath(window, path, (owner, prop) => {
             let stored: unknown = owner[prop];
             try {
@@ -79,6 +102,7 @@ export const CATALOG: Record<string, Scriptlet> = {
 
     'abort-current-script': (path, search) => {
         if (!path) return;
+        armAbort();
         const matches = matcher(search);
         definePath(window, path, (owner, prop) => {
             const original = owner[prop];
@@ -90,21 +114,6 @@ export const CATALOG: Record<string, Scriptlet> = {
                         return original;
                     },
                     set(value: unknown) { (owner as Record<string, unknown>)[prop] = value; },
-                });
-            } catch { /* already locked */ }
-        });
-    },
-
-    'set-constant': (path, rawValue) => {
-        if (!path) return;
-        const value = resolveValue(rawValue ?? '');
-        definePath(window, path, (owner, prop) => {
-            try {
-                Object.defineProperty(owner, prop, {
-                    configurable: false,
-                    get: () => value,
-                    // Swallow writes: the point is that the value stays put.
-                    set: () => { /* ignore */ },
                 });
             } catch { /* already locked */ }
         });
@@ -180,26 +189,6 @@ export const CATALOG: Record<string, Scriptlet> = {
         if (document.documentElement) start();
         else document.addEventListener('DOMContentLoaded', start, { once: true });
         if (behaviour !== 'stay') setTimeout(() => observer.disconnect(), 10_000);
-    },
-
-    'remove-node-text': (tag, search) => {
-        if (!tag) return;
-        const matches = matcher(search);
-        const strip = (): void => {
-            let nodes: Element[];
-            try {
-                nodes = [...document.querySelectorAll(tag)];
-            } catch { return; }
-            for (const node of nodes) {
-                if (matches(node.textContent ?? '')) node.remove();
-            }
-        };
-        strip();
-        const observer = new MutationObserver(strip);
-        if (document.documentElement) {
-            observer.observe(document.documentElement, { childList: true, subtree: true });
-            setTimeout(() => observer.disconnect(), 10_000);
-        }
     },
 
     'set-cookie': (name, value, path) => {
@@ -312,36 +301,9 @@ export const CATALOG: Record<string, Scriptlet> = {
         document.addEventListener('DOMContentLoaded', clean, { once: true });
     },
 
-    'nano-setInterval-booster': (search, delay, factor) => {
-        const matches = matcher(search);
-        const wanted = delay === undefined || delay === '' ? null : Number(delay);
-        const boost = Number(factor ?? 0.05);
-        const original = window.setInterval;
-        window.setInterval = function (this: unknown, ...args: unknown[]) {
-            const [callback, ms] = args as [unknown, number];
-            if (matches(String(callback)) && (wanted === null || wanted === ms)) {
-                args[1] = typeof ms === 'number' ? ms * boost : ms;
-            }
-            return original.apply(this, args as Parameters<typeof original>);
-        } as typeof window.setInterval;
-    },
-
-    'nano-setTimeout-booster': (search, delay, factor) => {
-        const matches = matcher(search);
-        const wanted = delay === undefined || delay === '' ? null : Number(delay);
-        const boost = Number(factor ?? 0.05);
-        const original = window.setTimeout;
-        window.setTimeout = function (this: unknown, ...args: unknown[]) {
-            const [callback, ms] = args as [unknown, number];
-            if (matches(String(callback)) && (wanted === null || wanted === ms)) {
-                args[1] = typeof ms === 'number' ? ms * boost : ms;
-            }
-            return original.apply(this, args as Parameters<typeof original>);
-        } as typeof window.setTimeout;
-    },
-
     'abort-on-stack-trace': (path, needle) => {
         if (!path) return;
+        armAbort();
         const matches = matcher(needle);
         definePath(window, path, (owner, prop) => {
             const original = owner[prop];
@@ -358,48 +320,58 @@ export const CATALOG: Record<string, Scriptlet> = {
         });
     },
 
-    /**
-     * Removes properties from JSON responses.
-     *
-     * This is the mechanism behind most video-ad defusing: the ad descriptor
-     * is pruned out of the player's own JSON before it is read.
-     */
-    'json-prune': (paths) => {
-        if (!paths) return;
-        const wanted = paths.split(/\s+/).filter(Boolean);
+    'set-constant': setConstant,
+    'trusted-set-constant': trustedSetConstant,
+    'adjust-setTimeout': adjustSetTimeout,
+    'adjust-setInterval': adjustSetInterval,
 
-        const prune = (value: unknown): unknown => {
-            if (value === null || typeof value !== 'object') return value;
-            for (const path of wanted) {
-                const parts = path.split('.');
-                const last = parts.pop();
-                if (last === undefined) continue;
-                let owner: unknown = value;
-                for (const part of parts) {
-                    if (owner === null || typeof owner !== 'object') { owner = undefined; break; }
-                    owner = (owner as Record<string, unknown>)[part];
-                }
-                if (owner !== null && typeof owner === 'object') {
-                    delete (owner as Record<string, unknown>)[last];
-                }
-            }
-            return value;
-        };
+    'remove-node-text': removeNodeText,
+    'trusted-replace-node-text': replaceNodeText,
 
-        const originalParse = JSON.parse;
-        JSON.parse = function (this: unknown, ...args: Parameters<typeof JSON.parse>) {
-            return prune(originalParse.apply(this, args));
-        };
-
-        const originalJson = Response.prototype.json;
-        Response.prototype.json = function (this: Response, ...args: unknown[]) {
-            return originalJson.apply(this, args as []).then(prune);
-        } as typeof originalJson;
-    },
+    'json-prune': jsonPrune,
+    'json-prune-fetch-response': jsonPruneFetchResponse,
+    'json-prune-xhr-response': jsonPruneXhrResponse,
+    'json-edit': jsonEdit,
+    'trusted-json-edit': trustedJsonEdit,
+    'json-edit-fetch-response': jsonEditFetchResponse,
+    'trusted-json-edit-fetch-response': trustedJsonEditFetchResponse,
+    'json-edit-xhr-response': jsonEditXhrResponse,
+    'trusted-json-edit-xhr-response': trustedJsonEditXhrResponse,
+    'trusted-replace-fetch-response': trustedReplaceFetchResponse,
+    'trusted-replace-xhr-response': trustedReplaceXhrResponse,
+    'edit-inbound-object': editInboundObject,
+    'trusted-edit-inbound-object': trustedEditInboundObject,
+    'trusted-prevent-dom-bypass': trustedPreventDomBypass,
 };
+
+/** The name a scriptlet is implemented under, whatever alias a list used. */
+export function canonicalName(name: string): string {
+    return ALIASES[name] ?? name;
+}
 
 /** Resolves an alias to its implementation. */
 export function lookup(name: string): Scriptlet | undefined {
-    const canonical = ALIASES[name] ?? name;
-    return CATALOG[canonical];
+    const canonical = canonicalName(name);
+    return hasOwn(CATALOG, canonical) ? CATALOG[canonical] : undefined;
+}
+
+/**
+ * Whether a scriptlet may only be used by a list we trust.
+ *
+ * The `trusted-` scriptlets take text from the filter and put it into the
+ * page — a replacement string, a cookie value, a JSON fragment. uBlock Origin
+ * honours them from its own lists only, so that a third-party list cannot use
+ * them to inject content; the same line is drawn here.
+ */
+export function requiresTrust(name: string): boolean {
+    return name.startsWith('trusted-') || canonicalName(name).startsWith('trusted-');
+}
+
+export type World = 'MAIN' | 'ISOLATED';
+
+/** These only read and write the DOM, and are better off out of the page's reach. */
+const ISOLATED_WORLD = new Set(['remove-node-text', 'trusted-replace-node-text']);
+
+export function worldOf(name: string): World {
+    return ISOLATED_WORLD.has(canonicalName(name)) ? 'ISOLATED' : 'MAIN';
 }

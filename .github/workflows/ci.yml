@@ -70,6 +70,13 @@ jobs:
       - name: Verify the userscript
         run: pnpm userscript-check
 
+      # Video ads are removed by editing the player's own API traffic, which no
+      # count of covered scriptlets says anything about. A simulated YouTube is
+      # served to the extension, then to the userscript, and the extension's
+      # Errors page has to stay empty throughout.
+      - name: Verify video-ad defusing
+        run: pnpm youtube-check
+
       # The userscript's real target is Safari on iOS, which is WebKit. A
       # selector WebKit cannot parse silently takes the rest of its rule with
       # it, and Chromium will never show that — so the same checks run again in

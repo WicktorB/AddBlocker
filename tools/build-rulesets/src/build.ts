@@ -17,7 +17,7 @@ import { compile, validateRuleset } from '@addblocker/dnr-compiler';
 
 import { QUOTAS, RULESETS, type Ruleset } from './catalog.js';
 import { buildCosmetic, type ContentScriptEntry } from './cosmetic.js';
-import { buildScriptlets } from './scriptlets.js';
+import { buildScriptlets, isTrustedSource, type ScriptletSource } from './scriptlets.js';
 import { buildUi } from './ui.js';
 import { buildStamp, type BuildStamp } from '../../shared/version.js';
 
@@ -67,14 +67,19 @@ interface BuiltRuleset {
 /** List text after preprocessing, kept so the cosmetic build reuses it. */
 const rawLists: string[] = [];
 
+/** The same text, with what the scriptlet build needs to know of its origin. */
+const scriptletSources: ScriptletSource[] = [];
+
 /** What resolving the `!#if` directives removed, for the build report. */
 const directives = { blocks: 0, droppedLines: 0, malformed: 0 };
 
 async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     const contents: string[] = [];
+    const trusted: boolean[] = [];
     for (const source of ruleset.sources) {
         try {
             contents.push(await loadSource(source.id, source.url));
+            trusted.push(isTrustedSource(source.id));
         } catch (err) {
             // A list that disappears upstream should not sink the whole build,
             // but it must be loud.
@@ -98,6 +103,7 @@ async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     }
 
     rawLists.push(...contents);
+    contents.forEach((text, i) => scriptletSources.push({ text, trusted: trusted[i] }));
     const { filters, stats: parseStats } = parseList(contents.join('\n'));
     const { rules, stats, sourceMap } = compile(filters);
 
@@ -268,11 +274,15 @@ async function main(): Promise<void> {
         `${cosmetic.stats.dynamicPatterns} registered dynamically (adr/0002)`);
 
     console.log('\nBuilding scriptlets');
-    const scriptlets = await buildScriptlets(rawLists, OUT_DIR);
+    const scriptlets = await buildScriptlets(scriptletSources, OUT_DIR);
     console.log(`  ${scriptlets.stats.domains} domains in ${scriptlets.stats.buckets} buckets, ` +
         `${scriptlets.stats.invocations} invocations`);
     console.log(`  exceptions: ${scriptlets.stats.exceptions}, ` +
-        `generic skipped: ${scriptlets.stats.genericSkipped}`);
+        `generic skipped: ${scriptlets.stats.genericSkipped}, ` +
+        `trusted-only refused from third-party lists: ${scriptlets.stats.untrustedDropped}`);
+    const isolated = scriptlets.registrations.filter((r) => r.world === 'ISOLATED').length;
+    console.log(`  worlds: ${scriptlets.registrations.length - isolated} bucket(s) in the page's, ` +
+        `${isolated} in the isolated one`);
     console.log(`  payload: runtime ${(scriptlets.stats.runtimeBytes / 1024).toFixed(0)}kB, ` +
         `buckets ${(scriptlets.stats.bucketBytes / 1024).toFixed(0)}kB total`);
 
@@ -282,7 +292,7 @@ async function main(): Promise<void> {
         const covered = scriptlets.stats.invocations;
         console.log(`  not in the catalogue: ${dropped} invocation(s) across ${unknown.length} scriptlet(s) ` +
             `— ${((100 * covered) / (covered + dropped)).toFixed(1)}% coverage`);
-        for (const [name, count] of unknown.slice(0, 8)) console.log(`    ${String(count).padStart(4)}  ${name}`);
+        for (const [name, count] of unknown.slice(0, 12)) console.log(`    ${String(count).padStart(4)}  ${name}`);
     }
 
     // Cosmetic buckets run in the isolated world, scriptlets in the page's own.

@@ -8,13 +8,19 @@
  * must run *before* those scripts.
  */
 
-import { lookup } from '@addblocker/scriptlet-runtime/catalog';
+import { lookup, requiresTrust, worldOf, type World } from '@addblocker/scriptlet-runtime/catalog';
 import type { ScriptletFilter } from './parse.js';
 
-export type Invocation = [name: string, ...args: string[]];
+/**
+ * `[name, ...args]`. When the invocation must not run on some subdomains of
+ * the domain it is filed under, it is led by `~host|host` — see the runtime.
+ */
+export type Invocation = string[];
 
 export interface ScriptletBucket {
     id: string;
+    /** The world these invocations must run in. */
+    world: World;
     domains: string[];
     invocations: Record<string, Invocation[]>;
 }
@@ -30,6 +36,8 @@ export interface ScriptletCompileResult {
         /** Invocations dropped because the catalogue has no such scriptlet. */
         unknownScriptlets: number;
         unknownByName: Record<string, number>;
+        /** `trusted-*` invocations dropped because their list is not a trusted one. */
+        untrustedDropped: number;
         /** Generic invocations, which we do not apply site-wide. */
         genericSkipped: number;
         skippedDomains: number;
@@ -63,34 +71,47 @@ function invocationKey(invocation: Invocation): string {
     return JSON.stringify(invocation);
 }
 
+/** Whether `host` is `domain` or one of its subdomains. */
+function isUnder(host: string, domain: string): boolean {
+    return host === domain || host.endsWith(`.${domain}`);
+}
+
+interface Placed {
+    invocation: Invocation;
+    /**
+     * Subdomains this invocation must not run on. `null` once some filter
+     * applies it to the whole domain: an exclusion written on one filter does
+     * not restrict another that has none.
+     */
+    excluded: Set<string> | null;
+}
+
 export function compileScriptlets(filters: ScriptletFilter[]): ScriptletCompileResult {
-    const byDomain = new Map<string, Map<string, Invocation>>();
-    const exceptionsByDomain = new Map<string, Set<string>>();
+    const byDomain = new Map<string, Map<string, Placed>>();
+    const exceptionFilters: ScriptletFilter[] = [];
     const unknownByName: Record<string, number> = {};
     let unknownScriptlets = 0;
+    let untrustedDropped = 0;
     let genericSkipped = 0;
     let skippedDomains = 0;
-    let exceptions = 0;
 
     for (const filter of filters) {
+        if (filter.isException) {
+            exceptionFilters.push(filter);
+            continue;
+        }
+
         // A scriptlet we do not implement would be a silent no-op at runtime.
         // Counting them keeps the coverage gap visible.
-        if (!filter.isException && lookup(filter.name) === undefined) {
+        if (lookup(filter.name) === undefined) {
             unknownScriptlets += 1;
             unknownByName[filter.name] = (unknownByName[filter.name] ?? 0) + 1;
             continue;
         }
 
-        if (filter.isException) {
-            exceptions += 1;
-            for (const raw of filter.domains) {
-                for (const domain of expandDomain(raw)) {
-                    if (!isUsableDomain(domain)) continue;
-                    const set = exceptionsByDomain.get(domain) ?? new Set<string>();
-                    set.add(filter.name);
-                    exceptionsByDomain.set(domain, set);
-                }
-            }
+        // A list we do not vouch for does not get to inject text into pages.
+        if (requiresTrust(filter.name) && !filter.trusted) {
+            untrustedDropped += 1;
             continue;
         }
 
@@ -103,55 +124,108 @@ export function compileScriptlets(filters: ScriptletFilter[]): ScriptletCompileR
         }
 
         const invocation: Invocation = [filter.name, ...filter.args];
+        const key = invocationKey(invocation);
+        const excludedDomains = filter.excludedDomains.flatMap(expandDomain).filter(isUsableDomain);
         let placed = false;
         for (const raw of filter.domains) {
             for (const domain of expandDomain(raw)) {
                 if (!isUsableDomain(domain)) continue;
+                // `a.com,~a.com` or `sub.a.com,~a.com`: excluded outright.
+                if (excludedDomains.some((excluded) => isUnder(domain, excluded))) continue;
                 placed = true;
-                const map = byDomain.get(domain) ?? new Map<string, Invocation>();
-                map.set(invocationKey(invocation), invocation);
+                // `a.com,~sub.a.com`: applies, except under those subdomains.
+                const inside = excludedDomains.filter((excluded) => isUnder(excluded, domain));
+                const map = byDomain.get(domain) ?? new Map<string, Placed>();
+                const existing = map.get(key);
+                if (existing === undefined) {
+                    map.set(key, { invocation, excluded: inside.length > 0 ? new Set(inside) : null });
+                } else if (existing.excluded !== null) {
+                    existing.excluded = inside.length > 0
+                        ? new Set(inside.filter((d) => existing.excluded?.has(d)))
+                        : null;
+                    if (existing.excluded?.size === 0) existing.excluded = null;
+                }
                 byDomain.set(domain, map);
             }
         }
         if (!placed) skippedDomains += 1;
     }
 
-    // Apply exceptions: a `#@#+js(name)` disables that scriptlet on the domain.
-    for (const [domain, disabled] of exceptionsByDomain) {
-        const map = byDomain.get(domain);
-        if (map === undefined) continue;
-        for (const [key, invocation] of map) {
-            if (disabled.has(invocation[0])) map.delete(key);
+    // Exceptions. `#@#+js(name, args)` cancels that exact invocation — same
+    // name as written, same arguments — and `#@#+js()` cancels all of them.
+    // It holds for the exception's domain and everything under it, so an
+    // invocation filed under a parent domain keeps running there but learns
+    // to stay off that subtree.
+    for (const filter of exceptionFilters) {
+        const all = filter.name === '';
+        const key = invocationKey([filter.name, ...filter.args]);
+        for (const raw of filter.domains) {
+            for (const domain of expandDomain(raw)) {
+                if (!isUsableDomain(domain)) continue;
+                for (const [placedDomain, map] of byDomain) {
+                    const below = isUnder(placedDomain, domain);
+                    if (!below && !isUnder(domain, placedDomain)) continue;
+                    for (const [placedKey, placed] of [...map]) {
+                        if (!all && placedKey !== key) continue;
+                        if (below) map.delete(placedKey);
+                        else (placed.excluded ??= new Set()).add(domain);
+                    }
+                    if (map.size === 0) byDomain.delete(placedDomain);
+                }
+            }
         }
-        if (map.size === 0) byDomain.delete(domain);
     }
 
-    const domains = [...byDomain.keys()].sort();
     const buckets: ScriptletBucket[] = [];
+    let invocationCount = 0;
+    const placedDomains = new Set<string>();
 
-    for (let start = 0; start < domains.length; start += BUCKET_SIZE) {
-        const slice = domains.slice(start, start + BUCKET_SIZE);
-        const invocations: Record<string, Invocation[]> = {};
-        for (const domain of slice) {
-            invocations[domain] = [...(byDomain.get(domain)?.values() ?? [])];
+    for (const world of ['MAIN', 'ISOLATED'] as const) {
+        const perDomain = new Map<string, Invocation[]>();
+        for (const [domain, map] of byDomain) {
+            const list: Invocation[] = [];
+            for (const { invocation, excluded } of map.values()) {
+                if (worldOf(invocation[0]) !== world) continue;
+                list.push(excluded !== null && excluded.size > 0
+                    ? [`~${[...excluded].sort().join('|')}`, ...invocation]
+                    : invocation);
+            }
+            if (list.length === 0) continue;
+            perDomain.set(domain, list);
+            placedDomains.add(domain);
+            invocationCount += list.length;
         }
-        buckets.push({
-            id: `scriptlets-${String(buckets.length).padStart(3, '0')}`,
-            domains: slice,
-            invocations,
-        });
+
+        const domains = [...perDomain.keys()].sort();
+        // The main-world buckets keep the names they have always had; the
+        // isolated ones are numbered apart so neither series shifts the other.
+        const prefix = world === 'MAIN' ? 'scriptlets' : 'scriptlets-isolated';
+        let index = 0;
+        for (let start = 0; start < domains.length; start += BUCKET_SIZE) {
+            const slice = domains.slice(start, start + BUCKET_SIZE);
+            const invocations: Record<string, Invocation[]> = {};
+            for (const domain of slice) invocations[domain] = perDomain.get(domain) ?? [];
+            buckets.push({
+                id: `${prefix}-${String(index).padStart(3, '0')}`,
+                world,
+                domains: slice,
+                invocations,
+            });
+            index += 1;
+        }
     }
 
     return {
         buckets,
         stats: {
             inputFilters: filters.length,
-            domains: byDomain.size,
+            domains: placedDomains.size,
             buckets: buckets.length,
-            invocations: [...byDomain.values()].reduce((n, m) => n + m.size, 0),
-            exceptions,
+            invocations: invocationCount,
+            exceptions: exceptionFilters.length,
             unknownScriptlets,
             unknownByName,
+            untrustedDropped,
             genericSkipped,
             skippedDomains,
         },

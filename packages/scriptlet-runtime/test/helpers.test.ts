@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { matcher, resolveValue } from '../src/helpers.js';
-import { CATALOG, lookup } from '../src/catalog.js';
+import { CATALOG, lookup, requiresTrust, worldOf } from '../src/catalog.js';
 
 describe('matcher', () => {
     it('matches a plain substring', () => {
@@ -60,6 +60,40 @@ describe('catalogue', () => {
             'ra', 'nowoif', 'trusted-set-cookie', 'rmnt', 'nowebrtc', 'json-prune']) {
             expect(lookup(name), `missing: ${name}`).toBeTypeOf('function');
         }
+    });
+
+    // By count these are a rounding error; by effect they are the whole of
+    // what removes video ads on YouTube. They were once all missing while
+    // the build reported 99.5 % coverage.
+    it('covers every scriptlet the YouTube filters use', () => {
+        for (const name of ['json-prune', 'json-prune-fetch-response', 'json-prune-xhr-response',
+            'trusted-replace-fetch-response', 'trusted-rpfr', 'trusted-replace-xhr-response',
+            'trusted-edit-inbound-object', 'trusted-prevent-dom-bypass', 'rpnt', 'trusted-rpnt', 'rmnt',
+            'json-edit-fetch-response', 'set', 'trusted-set', 'nano-stb', 'aeld', 'trusted-click-element']) {
+            expect(lookup(name), `missing: ${name}`).toBeTypeOf('function');
+        }
+    });
+
+    it('does not mistake an inherited property for a scriptlet', () => {
+        expect(lookup('constructor')).toBeUndefined();
+        expect(lookup('toString')).toBeUndefined();
+    });
+
+    it('knows which scriptlets only a trusted list may use', () => {
+        expect(requiresTrust('trusted-replace-fetch-response')).toBe(true);
+        expect(requiresTrust('trusted-set-cookie')).toBe(true);
+        // An alias of a trusted scriptlet is no less trusted for its short name.
+        expect(requiresTrust('rpnt')).toBe(true);
+        expect(requiresTrust('replace-node-text')).toBe(true);
+        expect(requiresTrust('json-prune')).toBe(false);
+        expect(requiresTrust('rmnt')).toBe(false);
+    });
+
+    it('runs the DOM-only scriptlets in the isolated world and the rest in the page\'s', () => {
+        expect(worldOf('rmnt')).toBe('ISOLATED');
+        expect(worldOf('rpnt')).toBe('ISOLATED');
+        expect(worldOf('json-prune')).toBe('MAIN');
+        expect(worldOf('set')).toBe('MAIN');
     });
 
     it('returns undefined for an unknown name rather than throwing', () => {

@@ -22,12 +22,13 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 308 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
+| `pnpm test` | 391 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
 | `pnpm verify` | Charge le build dans Chromium, vérifie le blocage réel et que Chrome n'a ignoré aucune règle |
 | `pnpm cosmetic-check` | Vérifie le masquage et l'absence de flash |
 | `pnpm scriptlet-check` | Vérifie les scriptlets dans le monde de la page |
+| `pnpm youtube-check` | Sert un YouTube simulé (extension puis userscript) : réponses du lecteur sans publicité, et page d'erreurs de l'extension vide |
 | `pnpm ui-check` | Vérifie les flux utilisateur de bout en bout |
 | `pnpm kill-check` | Vérifie la neutralisation d'une règle précise |
 | `pnpm reload-check` | Vérifie que le rebuild est bien pris en compte |
@@ -44,7 +45,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 |---|---|
 | Blocage réseau | ✅ 17 457 règles (58 % du quota garanti), 0,61 % de filtres perdus, 97,8 % d'accord avec l'oracle |
 | Filtrage cosmétique | ✅ 23 668 domaines, 58 795 sélecteurs, sans flash |
-| Scriptlets | ✅ 62 916 invocations, 99,5 % du catalogue couvert |
+| Scriptlets | ✅ 63 211 invocations ; les scriptlets de réécriture des réponses du lecteur vidéo (YouTube) sont couverts et vérifiés sur page simulée — pas sur le vrai site |
 | UI (popup, options, picker) | ✅ bascule par site en ~150 ms, filtres utilisateur, picker |
 | Mise à jour des listes | ✅ `pnpm update-filters` en 4,1 s, kill switch par règle |
 | Parité vs uBlock Origin | ✅ 100 % sur 5 200 requêtes, 0 % de sur-blocage — non mesuré sur le web réel |
@@ -93,7 +94,7 @@ Chaque liste se désactive dans la page d'options. Si un site se comporte mal ap
 |---|---|
 | Blocage réseau | **100 % d'uBO** sur corpus synthétique (5 200 requêtes, 0 % de sur-blocage) |
 | Filtrage cosmétique (dont procédural) | ~100 % |
-| Scriptlets / anti‑anti‑adblock | ~95 % |
+| Scriptlets / anti‑anti‑adblock | ~95 % des scriptlets d'uBO ; ceux qu'utilisent les filtres YouTube le sont tous |
 | Réactivité aux ripostes | inférieure — limite structurelle de MV3, sans solution |
 
 ## Sur mobile et dans les navigateurs sans extension

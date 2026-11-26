@@ -77,13 +77,23 @@ class Pool {
     }
 }
 
-async function readLists(): Promise<string[]> {
+interface ListText {
+    text: string;
+    /** One of uBlock Origin's own lists, allowed the `trusted-*` scriptlets. */
+    trusted: boolean;
+}
+
+async function readLists(): Promise<ListText[]> {
     const files = (await readdir(CACHE_DIR)).filter((f) => f.endsWith('.txt')).sort();
     if (files.length === 0) throw new Error(`no lists in ${CACHE_DIR} — run pnpm build first`);
     const raws = await Promise.all(files.map((f) => readFile(join(CACHE_DIR, f), 'utf8')));
     // Same directive resolution as the extension, for a different target: this
     // build keeps the mobile and Safari branches the extension leaves out.
-    return raws.map((raw) => preprocess(raw, USERSCRIPT_ENV).text);
+    return raws.map((raw, i) => ({
+        text: preprocess(raw, USERSCRIPT_ENV).text,
+        // The cache file is named after the source id — same test as the extension.
+        trusted: files[i].startsWith('ubo_'),
+    }));
 }
 
 /**
@@ -209,8 +219,10 @@ async function main(): Promise<void> {
     console.log('Reading the filter lists…');
     const raws = await readLists();
 
-    const cosmetic = compileCosmetic(raws.flatMap((r) => parseCosmeticList(r)));
-    const scriptlets = compileScriptlets(raws.flatMap((r) => parseScriptletList(r)));
+    const cosmetic = compileCosmetic(raws.flatMap((r) => parseCosmeticList(r.text)));
+    const scriptlets = compileScriptlets(
+        raws.flatMap((r) => parseScriptletList(r.text, { trusted: r.trusted })),
+    );
     console.log(`  ${cosmetic.stats.domains} cosmetic domains, `
         + `${scriptlets.stats.domains} scriptlet domains\n`);
 
