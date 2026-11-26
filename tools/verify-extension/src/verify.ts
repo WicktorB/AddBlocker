@@ -13,6 +13,7 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { preinstalledChromium } from '../../shared/chromium.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
@@ -33,15 +34,15 @@ function resolveChromium(): string {
     if (explicit !== undefined && explicit !== '') return explicit;
 
     // Preinstalled in this dev container.
-    const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    if (existsSync(preinstalled)) return preinstalled;
+    const preinstalled = preinstalledChromium();
+    if (preinstalled !== null) return preinstalled;
 
     // Installed by `playwright-core install chromium`, as CI does.
     const managed = chromium.executablePath();
     if (existsSync(managed)) return managed;
 
     throw new Error(
-        `no Chromium found (tried CHROMIUM_PATH, ${preinstalled}, ${managed}). ` +
+        `no Chromium found (tried CHROMIUM_PATH, the preinstalled browsers, ${managed}). ` +
         'Run: pnpm --filter @addblocker/verify-extension exec playwright-core install chromium',
     );
 }

@@ -36,6 +36,15 @@ const uassets = (name: string): ListSource => ({
     url: `https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/${name}.txt`,
 });
 
+/**
+ * Liste FR is published as a single assembled file, unlike EasyList whose
+ * fragments we fetch one by one.
+ */
+const listefr: ListSource = {
+    id: 'liste_fr',
+    url: 'https://raw.githubusercontent.com/easylist/listefr/master/liste_fr.txt',
+};
+
 export const RULESETS: Ruleset[] = [
     {
         id: 'ads',
@@ -53,6 +62,15 @@ export const RULESETS: Ruleset[] = [
             easylist('easylist_thirdparty'),
             easylist('easylist_thirdparty_popup'),
         ],
+    },
+    {
+        // EasyList is written against English-language sites; the regional
+        // lists are where a French news site's own ad slots get named. On by
+        // default because French is who this build is for.
+        id: 'ads-fr',
+        title: 'Publicités francophones (Liste FR)',
+        enabledByDefault: true,
+        sources: [listefr],
     },
     {
         id: 'privacy',
@@ -88,7 +106,7 @@ export const RULESETS: Ruleset[] = [
     {
         id: 'annoyances',
         title: 'Nuisances (bannières, cookies)',
-        enabledByDefault: false,
+        enabledByDefault: true,
         sources: [uassets('annoyances-others'), uassets('annoyances-cookies')],
     },
 ];

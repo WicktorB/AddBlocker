@@ -16,10 +16,12 @@ import { promisify } from 'node:util';
 import { groupLists, loadLists } from './lists.js';
 import { parseList } from '@addblocker/filter-parser';
 import { compile, type DnrRule } from '@addblocker/dnr-compiler';
+import { preinstalledChromium } from '../../shared/chromium.js';
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = process.env.CHROMIUM_PATH ?? preinstalledChromium() ?? '';
+if (CHROME === '') throw new Error('no Chromium found — set CHROMIUM_PATH');
 const WORK = join(ROOT, 'out', 'bisect');
 
 function identity(): { key: string; id: string } {

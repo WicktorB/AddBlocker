@@ -180,7 +180,7 @@ function header(title: string, description: string, file: string): string {
  * réseau il faut l'extension (Chrome de bureau) ou un bloqueur de contenu natif
  * (Safari iOS).
  *
- * Engendré depuis EasyList, EasyPrivacy et uAssets.
+ * Engendré depuis EasyList, Liste FR, EasyPrivacy et uAssets.
  */
 `;
 }

@@ -79,7 +79,13 @@ export function parseNetworkFilter(line: string): NetworkFilter | null {
     const isException = text.startsWith('@@');
     if (isException) text = text.slice(2);
 
-    const { pattern, optionText } = splitOptions(text);
+    const split = splitOptions(text);
+    const { optionText } = split;
+    // `$script,third-party,domain=a.com|b.com` — options and no pattern — means
+    // "every URL, under these conditions"; uBO reads it as `*$…`. Regional
+    // lists lean on the form heavily, and treating it as an empty line dropped
+    // those filters without even counting them as unconverted.
+    const pattern = split.pattern === '' && optionText !== '' ? '*' : split.pattern;
     if (pattern === '') return null;
 
     const isRegex = pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/');

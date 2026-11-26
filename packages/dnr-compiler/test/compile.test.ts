@@ -227,3 +227,25 @@ describe('rule validation', () => {
         expect(validateRuleset(rules)).toEqual([]);
     });
 });
+
+describe('filters with options and no pattern', () => {
+    it('blocks the given types from the given sites, on any URL', () => {
+        const rule = ruleFor('$script,third-party,domain=a.com|b.com');
+        expect(rule.action.type).toBe('block');
+        expect(rule.condition.initiatorDomains).toEqual(['a.com', 'b.com']);
+        expect(rule.condition.resourceTypes).toEqual(['script']);
+        expect(rule.condition.domainType).toBe('thirdParty');
+    });
+
+    it('refuses a popup filter with no URL to match, which would block every navigation', () => {
+        for (const line of ['$popup,domain=a.com', '*$popup,domain=a.com,3p']) {
+            const { rules, stats } = rulesFor(line);
+            expect(rules).toHaveLength(0);
+            expect(stats.unconvertibleReasons['popup:no-url-to-match']).toBe(1);
+        }
+    });
+
+    it('keeps a popup filter that names its destination', () => {
+        expect(ruleFor('||spam.example^$popup,domain=a.com').condition.resourceTypes).toContain('main_frame');
+    });
+});

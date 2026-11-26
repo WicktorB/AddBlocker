@@ -153,3 +153,18 @@ describe('options', () => {
         expect(parse('||x.com^$badfilter').options.badfilter).toBe(true);
     });
 });
+
+describe('filters with options and no pattern', () => {
+    it('reads `$options` as `*$options`', () => {
+        const filter = parse('$script,third-party,domain=a.com|b.com');
+        expect(filter.pattern).toBe('*');
+        expect(filter.options.resourceTypes).toEqual(['script']);
+        expect(filter.options.thirdParty).toBe(true);
+        expect(filter.options.domains).toEqual(['a.com', 'b.com']);
+    });
+
+    it('still treats a line with neither as nothing', () => {
+        expect(parseNetworkFilter('')).toBeNull();
+        expect(parseNetworkFilter('@@')).toBeNull();
+    });
+});
