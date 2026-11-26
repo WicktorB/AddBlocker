@@ -50,6 +50,7 @@ export function emptyOptions(): FilterOptions {
         denyAllow: [],
         toDomains: [],
         methods: [],
+        excludedMethods: [],
         important: false,
         badfilter: false,
         matchCase: false,
@@ -150,11 +151,14 @@ export function parseOptions(optionText: string): FilterOptions {
                 break;
             }
             case 'method':
-                options.methods.push(
-                    ...value.split('|')
-                        .filter((m) => m !== '' && !m.startsWith('~'))
-                        .map((m) => m.toUpperCase()),
-                );
+                // A negated entry used to be dropped, which turned "every
+                // method but GET" into "every method" — a wider block than
+                // the filter asked for.
+                for (const method of value.split('|')) {
+                    if (method === '' || method === '~') continue;
+                    if (method.startsWith('~')) options.excludedMethods.push(method.slice(1).toUpperCase());
+                    else options.methods.push(method.toUpperCase());
+                }
                 break;
             case 'popup': case 'popunder':
                 options.popup = true;

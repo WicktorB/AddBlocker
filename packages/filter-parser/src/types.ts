@@ -37,6 +37,8 @@ export interface FilterOptions {
     /** `$to=`: request domains to restrict to. Not the inverse of denyallow. */
     toDomains: string[];
     methods: string[];
+    /** `$method=~get`: every method but these. */
+    excludedMethods: string[];
     important: boolean;
     badfilter: boolean;
     matchCase: boolean;

@@ -22,10 +22,10 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 289 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
+| `pnpm test` | 303 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
-| `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
+| `pnpm verify` | Charge le build dans Chromium, vérifie le blocage réel et que Chrome n'a ignoré aucune règle |
 | `pnpm cosmetic-check` | Vérifie le masquage et l'absence de flash |
 | `pnpm scriptlet-check` | Vérifie les scriptlets dans le monde de la page |
 | `pnpm ui-check` | Vérifie les flux utilisateur de bout en bout |
@@ -41,7 +41,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Domaine | État |
 |---|---|
-| Blocage réseau | ✅ 17 533 règles (58 % du quota garanti), 0,52 % de filtres perdus, 97,1 % d'accord avec l'oracle |
+| Blocage réseau | ✅ 17 457 règles (58 % du quota garanti), 0,61 % de filtres perdus, 97,8 % d'accord avec l'oracle |
 | Filtrage cosmétique | ✅ 23 668 domaines, 58 795 sélecteurs, sans flash |
 | Scriptlets | ✅ 62 916 invocations, 99,5 % du catalogue couvert |
 | UI (popup, options, picker) | ✅ bascule par site en ~150 ms, filtres utilisateur, picker |

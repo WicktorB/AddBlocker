@@ -168,3 +168,26 @@ describe('filters with options and no pattern', () => {
         expect(parseNetworkFilter('@@')).toBeNull();
     });
 });
+
+describe('request methods', () => {
+    it('keeps negated methods as exclusions instead of dropping them', () => {
+        const { methods, excludedMethods } = parse('||x.com^$method=~get|~head').options;
+        expect(methods).toEqual([]);
+        expect(excludedMethods).toEqual(['GET', 'HEAD']);
+    });
+});
+
+describe('regex filters whose options contain a regex', () => {
+    it('ends the pattern at the options, not at the last slash', () => {
+        const filter = parse('/^https:\\/\\/a\\.com\\/x\\.js$/$script,3p,header=etag:/^W\\//');
+        expect(filter.isRegex).toBe(true);
+        expect(filter.pattern).toBe('/^https:\\/\\/a\\.com\\/x\\.js$/');
+        expect(filter.options.resourceTypes).toEqual(['script']);
+    });
+
+    it('still reads a plain regex filter, with or without options', () => {
+        expect(parse('/ads\\/banner\\d+/').pattern).toBe('/ads\\/banner\\d+/');
+        expect(parse('/ads\\/$/$image').pattern).toBe('/ads\\/$/');
+        expect(parse('/ads\\/$/$image').options.resourceTypes).toEqual(['image']);
+    });
+});

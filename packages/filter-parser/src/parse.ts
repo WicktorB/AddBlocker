@@ -32,7 +32,13 @@ export function classifyLine(line: string): LineKind {
 /** Splits a filter into pattern and options, respecting regex literals. */
 function splitOptions(text: string): { pattern: string; optionText: string } {
     if (text.startsWith('/')) {
-        const close = text.lastIndexOf('/');
+        // The regex ends at the last `/`, unless an option carries a regex of
+        // its own: in `/re/$script,header=etag:/^W\//` the last slash belongs
+        // to the header value. The literal ends at the first `/` followed by
+        // `$` and something shaped like an option list; taking the last one
+        // glued the options onto the pattern and shipped the lot as a regex.
+        const optionStart = /\/\$~?[a-z0-9_-]+(?:[=,]|$)/i.exec(text.slice(1));
+        const close = optionStart !== null ? optionStart.index + 1 : text.lastIndexOf('/');
         if (close > 0) {
             const rest = text.slice(close + 1);
             return rest.startsWith('$')
