@@ -8,7 +8,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +19,7 @@ import { QUOTAS, RULESETS, type Ruleset } from './catalog.js';
 import { buildCosmetic, type ContentScriptEntry } from './cosmetic.js';
 import { buildScriptlets } from './scriptlets.js';
 import { buildUi } from './ui.js';
+import { buildStamp, type BuildStamp } from '../../shared/version.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const CACHE_DIR = join(ROOT, '.filter-cache');
@@ -137,11 +138,56 @@ async function buildRuleset(ruleset: Ruleset): Promise<BuiltRuleset | null> {
     };
 }
 
-function writeManifest(built: BuiltRuleset[], contentScripts: ContentScriptEntry[]): Promise<void> {
+/** GitHub repository the extension compares itself against. */
+const REPOSITORY = 'WicktorB/AddBlocker';
+
+/**
+ * When the lists in the cache were downloaded — the oldest of them, since a
+ * build is only as fresh as its stalest list.
+ */
+async function listsFetchedAt(): Promise<string | null> {
+    let oldest: number | null = null;
+    for (const file of await readdir(CACHE_DIR)) {
+        if (!file.endsWith('.txt')) continue;
+        const { mtimeMs } = await stat(join(CACHE_DIR, file));
+        if (oldest === null || mtimeMs < oldest) oldest = mtimeMs;
+    }
+    return oldest === null ? null : new Date(oldest).toISOString();
+}
+
+/**
+ * Writes what the extension knows about itself.
+ *
+ * The popup and the options page read this to show which build is running,
+ * when it was made and how old its lists are — the questions someone asks
+ * before trusting that what they loaded is current. The manifest carries the
+ * version too, but nothing else: it has no field for a date or a commit.
+ */
+async function writeBuildInfo(stamp: BuildStamp, built: BuiltRuleset[]): Promise<void> {
+    const info = {
+        ...stamp,
+        repository: REPOSITORY,
+        listsFetchedAt: await listsFetchedAt(),
+        rules: built.reduce((n, b) => n + b.ruleCount, 0),
+        rulesets: Object.fromEntries(built.map((b) => [b.ruleset.id, {
+            title: b.ruleset.title,
+            rules: b.ruleCount,
+        }])),
+    };
+    await writeFile(join(OUT_DIR, 'build-info.json'), JSON.stringify(info, null, 2), 'utf8');
+}
+
+function writeManifest(
+    built: BuiltRuleset[], contentScripts: ContentScriptEntry[], stamp: BuildStamp,
+): Promise<void> {
+    const icons = { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' };
     const manifest = {
         manifest_version: 3,
         name: 'AddBlocker',
-        version: '0.1.0',
+        // The build time as `YYYY.MMDD.HHmm` — see tools/shared/version.ts.
+        version: stamp.version,
+        version_name: `${stamp.version}${stamp.commit === '' ? '' : ` (${stamp.commit}${stamp.dirty ? ', modifié' : ''})`}`,
+        icons,
         description: 'Bloqueur de publicités Manifest V3',
         permissions: [
             'declarativeNetRequest',
@@ -168,6 +214,7 @@ function writeManifest(built: BuiltRuleset[], contentScripts: ContentScriptEntry
         action: {
             default_popup: 'popup.html',
             default_title: 'AddBlocker',
+            default_icon: icons,
         },
         options_ui: {
             page: 'options.html',
@@ -249,7 +296,13 @@ async function main(): Promise<void> {
     console.log(`  service worker ${(ui.workerBytes / 1024).toFixed(0)}kB, ` +
         `${ui.assets.length} assets (popup, options, picker)`);
 
-    await writeManifest(built, cosmetic.contentScripts);
+    // The generated userscripts are rewritten by their own build and do not
+    // make this one "modified".
+    const stamp = buildStamp(ROOT, new Date(), ['userscript']);
+    await writeManifest(built, cosmetic.contentScripts, stamp);
+    await writeBuildInfo(stamp, built);
+    console.log(`\nVersion ${stamp.version}` +
+        `${stamp.commit === '' ? '' : ` — commit ${stamp.commit}${stamp.dirty ? ' + local changes' : ''}`}`);
 
     const enabled = built.filter((b) => b.ruleset.enabledByDefault);
     const enabledRules = enabled.reduce((n, b) => n + b.ruleCount, 0);

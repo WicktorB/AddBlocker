@@ -13,7 +13,13 @@ const WORKER_ENTRY = join(ROOT, 'packages', 'extension-core', 'src', 'worker.ts'
 const UI_DIR = join(ROOT, 'packages', 'ui', 'src');
 
 /** Copied verbatim: plain HTML and JS with no build step of their own. */
-const ASSETS = ['popup.html', 'popup.js', 'options.html', 'options.js', 'picker.js', 'user-cosmetic.js'];
+const ASSETS = [
+    'popup.html', 'popup.js', 'options.html', 'options.js', 'picker.js', 'user-cosmetic.js',
+    'build-info.js',
+];
+
+/** Sizes Chrome asks for: toolbar (16, 32), extensions page (48), store and install (128). */
+const ICON_SIZES = [16, 32, 48, 128];
 
 export interface UiBuildResult {
     workerBytes: number;
@@ -46,6 +52,12 @@ export async function buildUi(outDir: string, buildId: string): Promise<UiBuildR
 
     for (const asset of ASSETS) {
         await copyFile(join(UI_DIR, asset), join(outDir, asset));
+    }
+
+    // Only the rendered PNGs ship; the SVG sources stay in the repository.
+    await mkdir(join(outDir, 'icons'), { recursive: true });
+    for (const size of ICON_SIZES) {
+        await copyFile(join(UI_DIR, 'icons', `icon-${size}.png`), join(outDir, 'icons', `icon-${size}.png`));
     }
 
     return { workerBytes: workerCode.length, assets: ASSETS };

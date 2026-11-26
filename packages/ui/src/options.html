@@ -11,7 +11,14 @@
   * { box-sizing: border-box; }
   body { max-width: 720px; margin: 0 auto; padding: 28px 20px;
          font: 14px/1.6 system-ui,-apple-system,sans-serif; background: var(--bg); color: var(--fg); }
-  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+  dl.about { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 10px; font-size: 13px; }
+  dl.about dt { color: var(--muted); }
+  dl.about dd { margin: 0; }
+  .ok { color: #2f855a; font-weight: 600; }
+  .warn { color: #c05621; font-weight: 600; }
+  code { font: 12px ui-monospace, monospace; }
+  label.row .count { color: var(--muted); font-size: 12px; }
   h2 { font-size: 15px; margin: 28px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
   p.hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
   label.row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
@@ -27,8 +34,19 @@
 </style>
 </head>
 <body>
-  <h1>AddBlocker</h1>
+  <h1><img src="icons/icon-48.png" alt="" width="26" height="26">AddBlocker</h1>
   <p class="hint">Extension non empaquetée — les réglages s'appliquent au rechargement des pages.</p>
+
+  <h2>Version</h2>
+  <dl class="about">
+    <dt>Version</dt><dd id="about-version">…</dd>
+    <dt>Construite le</dt><dd id="about-built">…</dd>
+    <dt>Code</dt><dd id="about-commit">…</dd>
+    <dt>Listes téléchargées le</dt><dd id="about-lists">…</dd>
+    <dt>Règles réseau</dt><dd id="about-rules">…</dd>
+    <dt>État</dt><dd id="about-update">vérification…</dd>
+  </dl>
+  <p class="hint" id="about-howto"></p>
 
   <h2>Listes de filtres</h2>
   <p class="hint">Désactiver une liste libère du quota de règles pour les autres.</p>
@@ -53,6 +71,7 @@
   <textarea id="filters" spellcheck="false" placeholder="exemple.fr##.banniere-pub"></textarea>
   <p><button id="save">Enregistrer</button><span class="status" id="status"></span></p>
 
+  <script src="build-info.js"></script>
   <script src="options.js"></script>
 </body>
 </html>
