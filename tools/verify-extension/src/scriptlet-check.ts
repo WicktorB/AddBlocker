@@ -19,6 +19,7 @@ import { cp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { preinstalledChromium } from '../../shared/chromium.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
@@ -27,8 +28,8 @@ const STAGED = join(ROOT, 'dist', 'scriptlet-check-extension');
 function resolveChromium(): string {
     const explicit = process.env.CHROMIUM_PATH;
     if (explicit !== undefined && explicit !== '') return explicit;
-    const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    if (existsSync(preinstalled)) return preinstalled;
+    const preinstalled = preinstalledChromium();
+    if (preinstalled !== null) return preinstalled;
     const managed = chromium.executablePath();
     if (existsSync(managed)) return managed;
     throw new Error('no Chromium found');

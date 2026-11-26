@@ -345,6 +345,14 @@ Chacune faisait passer un comportement correct pour un écart :
 - **WebKit** : `userscript-check` sait tourner dans WebKit et la CI le fait, mais ce n'est pas Safari iOS sur un vrai téléphone.
 - Deux écarts de parité subsistent, antérieurs à cette phase : `||0.0.0.0^$third-party,domain=~[::1]…` (écarté par le garde-fou IPv6) et `*$frame,1p,from=…`.
 
+## Phase 8 — Liste française et finitions ✅
+
+- **Liste FR ajoutée**, activée par défaut (`ads-fr`) : 3 847 règles réseau, 1 788 sélecteurs génériques de plus. La liste *annoyances* (bannières cookies) passe elle aussi à activée par défaut. Quota : **17 533 règles sur 30 000 garanties (58 %)**.
+- **Filtres sans motif.** Liste FR s'appuie sur la forme `$script,third-party,domain=a.com|b.com` — des options, pas de motif — que uBO lit comme `*$…`. Le parseur la prenait pour une ligne vide et l'écartait sans même la compter : 160 filtres perdus en silence, dont les 135 `$removeparam=` d'uBO (`fbclid`, `gclid`…). Ils sont maintenant compilés. C'est aussi ce qui expliquait les deux écarts de parité qui restaient : la parité est à **100 %, 0 écart**.
+- **`$popup` sans URL refusé.** `$popup,domain=site.com` deviendrait un blocage `main_frame` dont la seule condition est la page d'origine : toute navigation depuis le site serait bloquée, ses propres liens compris. DNR ne distingue pas un popup d'un clic ; le filtre est compté comme non convertible plutôt que traduit à tort. Cela retire aussi les quelques `*$popup,domain=…` qui passaient déjà.
+- **Chemin de Chromium.** Les outils nommaient un build précis de Playwright (`chromium-1194`) ; ils cherchent maintenant le plus récent installé (`tools/shared/chromium.ts`).
+- **Contenu tardif testé.** `cosmetic-check` insère un élément 11 s après le chargement et vérifie que le moteur procédural le masque.
+
 ## Décisions actées
 
 **Distribution : usage personnel, extension non empaquetée, pas de Chrome Web Store.** Ce choix relâche trois contraintes majeures de l'architecture initiale :

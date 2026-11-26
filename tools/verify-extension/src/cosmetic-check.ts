@@ -15,6 +15,7 @@ import { cp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { preinstalledChromium } from '../../shared/chromium.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
@@ -23,8 +24,8 @@ const STAGED = join(ROOT, 'dist', 'cosmetic-check-extension');
 function resolveChromium(): string {
     const explicit = process.env.CHROMIUM_PATH;
     if (explicit !== undefined && explicit !== '') return explicit;
-    const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    if (existsSync(preinstalled)) return preinstalled;
+    const preinstalled = preinstalledChromium();
+    if (preinstalled !== null) return preinstalled;
     const managed = chromium.executablePath();
     if (existsSync(managed)) return managed;
     throw new Error('no Chromium found');
@@ -340,6 +341,35 @@ async function main(): Promise<void> {
                     const a = document.createElement('div'); a.id = ${JSON.stringify(id)};
                     document.body.prepend(a); }, 600);</script>`, '#after', 1500)),
                 `${selector} — applied when ${anchor} is inserted after load`);
+        }
+
+        // Content that arrives long after load — a sponsored post scrolled into
+        // an endless feed. The procedural engine used to stop watching after
+        // ten seconds, so this never got looked at; the wait below is past that
+        // on purpose.
+        console.log('\nLate content');
+        const lateCase = cases.find((c) => c.kind === 'procedural');
+        if (lateCase === undefined) {
+            console.log('  SKIP  no procedural case in this build');
+        } else {
+            const LATE_MS = 11_000;
+            const prefix = lateCase.selector.split(':')[0];
+            const late = await context.newPage();
+            const html = `<p>feed</p><script>setTimeout(() => {
+                document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(lateCase.html)});
+                window.__inserted = true; }, ${LATE_MS});</script>`;
+            await late.goto(`http://${lateCase.domain}:${port}/?html=${encodeURIComponent(html)}`,
+                { waitUntil: 'load' });
+            await late.waitForFunction('window.__inserted === true', undefined, { timeout: LATE_MS + 10_000 });
+            await late.waitForTimeout(1_000);
+            const state = await late.evaluate((sel: string) => {
+                const el = document.querySelector(sel);
+                return { present: el !== null, hidden: el === null || el.getBoundingClientRect().height === 0 };
+            }, prefix);
+            await late.close();
+            report(state.hidden,
+                `${lateCase.domain} — ${lateCase.selector}, inserted ${LATE_MS / 1000}s after load`
+                + `${state.hidden ? '' : ' NOT HIDDEN'}`);
         }
 
         // Cost of the generic sheet, which lands on every page.

@@ -5,7 +5,7 @@ maintenant que MV2 n'existe plus sur Chrome (retrait définitif du Web Store : 3
 
 **État : phases 1 à 6 terminées** — blocage réseau, cosmétique, scriptlets, interface, mise à jour des listes et mesure de parité.
 
-La parité atteint **99,94 % du taux de blocage d'uBlock Origin, 0 % de sur-blocage**, mesurée contre son propre moteur (`@gorhill/ubo-core`) sur 5 200 requêtes. Une réserve importante : ce corpus est **synthétique**. Il mesure la fidélité de la traduction des filtres, pas le comportement sur une vraie page. La mesure sur sites réels s'obtient avec `pnpm parity-sites`, qui demande un accès au web ouvert.
+La parité atteint **100 % du taux de blocage d'uBlock Origin, 0 % de sur-blocage**, mesurée contre son propre moteur (`@gorhill/ubo-core`) sur 5 200 requêtes. Une réserve importante : ce corpus est **synthétique**. Il mesure la fidélité de la traduction des filtres, pas le comportement sur une vraie page. La mesure sur sites réels s'obtient avec `pnpm parity-sites`, qui demande un accès au web ouvert.
 
 ## Démarrage
 
@@ -22,7 +22,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 284 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
+| `pnpm test` | 289 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
 | `pnpm verify` | Charge le build dans Chromium et vérifie le blocage réel |
@@ -41,12 +41,24 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Domaine | État |
 |---|---|
-| Blocage réseau | ✅ 13 320 règles, 0,57 % de filtres perdus, 97,1 % d'accord avec l'oracle |
-| Filtrage cosmétique | ✅ 22 164 domaines, 55 616 sélecteurs, sans flash |
+| Blocage réseau | ✅ 17 533 règles (58 % du quota garanti), 0,52 % de filtres perdus, 97,1 % d'accord avec l'oracle |
+| Filtrage cosmétique | ✅ 23 668 domaines, 58 795 sélecteurs, sans flash |
 | Scriptlets | ✅ 62 916 invocations, 99,5 % du catalogue couvert |
 | UI (popup, options, picker) | ✅ bascule par site en ~150 ms, filtres utilisateur, picker |
 | Mise à jour des listes | ✅ `pnpm update-filters` en 4,1 s, kill switch par règle |
-| Parité vs uBlock Origin | ✅ 99,94 % sur 5 200 requêtes, 0 % de sur-blocage — non mesuré sur le web réel |
+| Parité vs uBlock Origin | ✅ 100 % sur 5 200 requêtes, 0 % de sur-blocage — non mesuré sur le web réel |
+
+## Listes embarquées
+
+| Ruleset | Source | Par défaut |
+|---|---|---|
+| `ads` | EasyList | activé |
+| `ads-fr` | Liste FR (sites francophones) | activé |
+| `privacy` | EasyPrivacy | activé |
+| `ubo-core`, `ubo-badware`, `ubo-privacy` | uAssets (uBlock Origin) | activé |
+| `annoyances` | uAssets — bannières cookies et autres nuisances | activé |
+
+Chaque liste se désactive dans la page d'options. Si un site se comporte mal après une bannière de cookies masquée, c'est `annoyances` qu'il faut couper en premier.
 
 ## Documentation
 
@@ -66,14 +78,14 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Domaine | Cible |
 |---|---|
-| Blocage réseau | **99,94 % d'uBO** sur corpus synthétique (5 200 requêtes, 0 % de sur-blocage) |
+| Blocage réseau | **100 % d'uBO** sur corpus synthétique (5 200 requêtes, 0 % de sur-blocage) |
 | Filtrage cosmétique (dont procédural) | ~100 % |
 | Scriptlets / anti‑anti‑adblock | ~95 % |
 | Réactivité aux ripostes | inférieure — limite structurelle de MV3, sans solution |
 
 ## Sur mobile et dans les navigateurs sans extension
 
-[`userscript/addblocker.user.js`](https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker.user.js) (1,9 Mo) s'installe dans **Tampermonkey**, **Violentmonkey** ou **Userscripts** (Safari iOS). [`userscript/addblocker-lite.user.js`](https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker-lite.user.js) (250 ko) ne contient que les règles génériques, pour les appareils où la taille compte.
+[`userscript/addblocker.user.js`](https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker.user.js) (2,0 Mo) s'installe dans **Tampermonkey**, **Violentmonkey** ou **Userscripts** (Safari iOS). [`userscript/addblocker-lite.user.js`](https://raw.githubusercontent.com/WicktorB/AddBlocker/main/userscript/addblocker-lite.user.js) (280 ko) ne contient que les règles génériques, pour les appareils où la taille compte.
 
 Chaque build porte une version datée : le gestionnaire de userscripts récupère donc les listes à jour tout seul. Le script tourne aussi dans les iframes, et retombe sur le seul masquage cosmétique là où la CSP du site interdit l'injection dans la page.
 

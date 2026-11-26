@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium, type BrowserContext } from 'playwright-core';
 
 import { extensionIdForPath, reloadExtension } from '../../update-filters/src/reload.js';
+import { preinstalledChromium } from '../../shared/chromium.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
@@ -38,8 +39,8 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, 
 function resolveChromium(): string {
     const explicit = process.env.CHROMIUM_PATH;
     if (explicit !== undefined && explicit !== '') return explicit;
-    const preinstalled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-    if (existsSync(preinstalled)) return preinstalled;
+    const preinstalled = preinstalledChromium();
+    if (preinstalled !== null) return preinstalled;
     const managed = chromium.executablePath();
     if (existsSync(managed)) return managed;
     throw new Error('no Chromium found');

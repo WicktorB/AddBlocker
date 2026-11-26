@@ -14,10 +14,12 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { preinstalledChromium } from '../../shared/chromium.js';
 
 const run = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = process.env.CHROMIUM_PATH ?? preinstalledChromium() ?? '';
+if (CHROME === '') throw new Error('no Chromium found — set CHROMIUM_PATH');
 
 const SIZES = [100, 1_000, 5_000, 10_000, 25_000, 50_000];
 

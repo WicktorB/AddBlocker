@@ -56,6 +56,18 @@ export function unconvertibleReason(filter: NetworkFilter): string | null {
         if (list.some((entry) => !isRepresentableDomain(entry))) return 'domain:unrepresentable';
     }
 
+    // `$popup` becomes a main_frame block, which is sound when the filter names
+    // where the popup goes (`||spam.example^$popup`). With no URL to match —
+    // `$popup,domain=site.com` — the only thing left to key on is the page that
+    // started the navigation, and the rule would block *every* navigation from
+    // that site, its own links included. DNR cannot tell a popup from a click,
+    // so there is no faithful translation; the site keeps its popups rather
+    // than losing its links.
+    if (o.popup && !filter.isException && !filter.isRegex && filter.anchoredDomain === null
+        && /^\**$/.test(filter.pattern) && o.toDomains.length === 0) {
+        return 'popup:no-url-to-match';
+    }
+
     // A redirect needs a bundled resource to point at; without a name there is
     // nothing to serve.
     if (o.redirect !== null && o.redirect === '') return 'redirect:empty-target';
