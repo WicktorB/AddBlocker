@@ -19,7 +19,8 @@
     "ui-check": "pnpm --filter @addblocker/verify-extension run ui-check",
     "reload-check": "pnpm --filter @addblocker/verify-extension run reload-check",
     "kill-check": "pnpm --filter @addblocker/verify-extension run kill-check",
-    "userscript-check": "pnpm --filter @addblocker/verify-extension run userscript-check"
+    "userscript-check": "pnpm --filter @addblocker/verify-extension run userscript-check",
+    "render-icons": "pnpm --filter @addblocker/verify-extension run render-icons"
   },
   "devDependencies": {
     "vitest": "^3.2.7"

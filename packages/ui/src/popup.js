@@ -144,4 +144,22 @@ $('diagnose').addEventListener('click', async () => {
     renderRules(tab, state ?? { rules: [], isKilled: [] });
 });
 
+/**
+ * Which build this is and when it was made — no network involved; whether a
+ * newer one exists is the options page's question.
+ */
+async function renderVersion() {
+    const info = await BuildInfo.load();
+    const line = $('version');
+    line.textContent = `v${info.version} · ${BuildInfo.formatDate(info.builtAt)}`;
+    line.title = info.commit ? `commit ${info.commit}${info.dirty ? ' (modifié localement)' : ''}` : '';
+    if (BuildInfo.listsAreStale(info)) {
+        const stale = document.createElement('div');
+        stale.className = 'stale';
+        stale.textContent = `Listes vieilles de ${BuildInfo.daysSince(info.listsFetchedAt)} jours — voir Réglages.`;
+        line.append(stale);
+    }
+}
+
 void render();
+void renderVersion();

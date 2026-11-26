@@ -276,6 +276,34 @@ async function main(): Promise<void> {
             + `${countsMatch ? '' : ` — ${shipped.length - loaded} skipped; see the extension's Errors page`}`);
         if (!countsMatch) failed = true;
 
+        // The build stamp: what the popup and options page show as "which
+        // version is this". It has to agree with the manifest Chrome loaded,
+        // and the icons the manifest names have to be there.
+        console.log('\nBuild stamp');
+        const stamp = await page.evaluate(async () => {
+            const runtime = (globalThis as unknown as { chrome: typeof chrome }).chrome.runtime;
+            const manifest = runtime.getManifest();
+            const info = await (await fetch(runtime.getURL('build-info.json'))).json() as {
+                version?: string; builtAt?: string; commit?: string;
+            };
+            const icons: boolean[] = [];
+            for (const path of Object.values(manifest.icons ?? {})) {
+                try {
+                    icons.push((await fetch(runtime.getURL(path))).ok);
+                } catch {
+                    icons.push(false);
+                }
+            }
+            return { manifestVersion: manifest.version, info, icons };
+        });
+        const stampOk = stamp.info.version === stamp.manifestVersion
+            && !Number.isNaN(Date.parse(stamp.info.builtAt ?? ''));
+        console.log(`  ${stampOk ? 'PASS' : 'FAIL'}  version ${stamp.manifestVersion}, `
+            + `built ${stamp.info.builtAt ?? '?'}, commit ${stamp.info.commit === '' ? 'unknown' : stamp.info.commit}`);
+        const iconsOk = stamp.icons.length === 4 && stamp.icons.every(Boolean);
+        console.log(`  ${iconsOk ? 'PASS' : 'FAIL'}  ${stamp.icons.filter(Boolean).length}/4 icons load`);
+        if (!stampOk || !iconsOk) failed = true;
+
         await page.close();
 
         const probePage = await context.newPage();

@@ -22,7 +22,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 
 | Commande | Rôle |
 |---|---|
-| `pnpm test` | 303 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
+| `pnpm test` | 308 tests unitaires (DNR, cosmétique, scriptlets, réglages, picker, directives) |
 | `pnpm build` | Compile les listes ; échoue sur dépassement de quota ou règle invalide |
 | `pnpm update-filters` | Rafraîchit les listes, recompile, recharge l'extension |
 | `pnpm verify` | Charge le build dans Chromium, vérifie le blocage réel et que Chrome n'a ignoré aucune règle |
@@ -36,6 +36,7 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 | `pnpm parity-sites` | Même mesure sur des sites réels (nécessite le web ouvert) |
 | `pnpm build-userscript` | Génère le userscript (mobile, Safari, Tampermonkey) |
 | `pnpm userscript-check` | Vérifie le userscript dans un vrai navigateur (`USERSCRIPT_BROWSER=webkit` pour le moteur de Safari) |
+| `pnpm render-icons` | Régénère les PNG de l'icône depuis `packages/ui/src/icons/icon.svg` |
 
 ## Où ça en est
 
@@ -47,6 +48,18 @@ Au premier lancement, l'extension enregistre ses content scripts : compter envir
 | UI (popup, options, picker) | ✅ bascule par site en ~150 ms, filtres utilisateur, picker |
 | Mise à jour des listes | ✅ `pnpm update-filters` en 4,1 s, kill switch par règle |
 | Parité vs uBlock Origin | ✅ 100 % sur 5 200 requêtes, 0 % de sur-blocage — non mesuré sur le web réel |
+
+## Version et mise à jour
+
+Chaque build porte une version qui est sa date, au format `AAAA.MMJJ.HHmm` en UTC : `2026.1126.1338` a été construit le 26 novembre 2026 à 13 h 38. La même version figure dans le manifest de l'extension, dans `dist/extension/build-info.json` et dans l'en-tête du userscript.
+
+- **Popup** : la version et la date du build, en bas.
+- **Réglages → Version** : version, date, commit, date de téléchargement des listes, nombre de règles, et un état — *À jour* ou *Mise à jour disponible* — obtenu en comparant le commit du build à la branche `main` sur GitHub. C'est la seule requête que l'extension émet pour elle-même, et seulement quand cette page est ouverte.
+- **Listes** : au-delà de 7 jours, le popup et les réglages le signalent ; `pnpm update-filters` les rafraîchit.
+
+Pour mettre à jour : `git pull`, `pnpm build`, puis « Recharger » sur la page des extensions.
+
+L'icône est dans `packages/ui/src/icons/icon.svg` ; deux variantes sont dans `alternatives/` et les trois sont comparées dans [`docs/icon-proposals.png`](docs/icon-proposals.png). Pour en changer : `pnpm render-icons packages/ui/src/icons/alternatives/ad-barre.svg`.
 
 ## Listes embarquées
 

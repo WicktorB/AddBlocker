@@ -10,7 +10,8 @@
     "ui-check": "tsx src/ui-check.ts",
     "reload-check": "tsx src/reload-check.ts",
     "kill-check": "tsx src/kill-check.ts",
-    "userscript-check": "tsx src/userscript-check.ts"
+    "userscript-check": "tsx src/userscript-check.ts",
+    "render-icons": "tsx src/render-icons.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

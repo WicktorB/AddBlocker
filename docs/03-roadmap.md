@@ -365,6 +365,14 @@ Premier chargement sur une vraie machine, et la page d'erreurs de l'extension af
 
 `pnpm verify` pose maintenant deux questions à Chromium : chaque regex livrée est-elle supportée (`isRegexSupported`), et le quota consommé correspond-il au nombre de règles livrées ? La seconde attrape toute règle ignorée, quelle qu'en soit la raison. Lancé sur l'ancien build, il échoue : 60 regex refusées, 71 règles manquantes au compte.
 
+## Phase 10 — Icône et version ✅
+
+- **Icône** : bouclier barré sur fond dégradé, lisible à 16 px ; PNG 16/32/48/128 rendus depuis un SVG (`pnpm render-icons`).
+- **Version = date du build**, `AAAA.MMJJ.HHmm` UTC, partagée par l'extension et le userscript (`tools/shared/version.ts`). Chaque partie est un entier sans zéro initial : Chrome refuse un manifest dont la version contient `007`, ce qu'un assemblage de chaînes aurait produit juste après minuit UTC.
+- **`build-info.json`** : version, date, commit, date des listes, règles par liste. Le popup affiche version et date ; les réglages ajoutent l'état *à jour / mise à jour disponible*, par comparaison du commit avec `main` sur GitHub — une requête, uniquement à l'ouverture de cette page.
+- Les réglages affichent le titre des listes et leur nombre de règles au lieu de leur identifiant.
+- `verify` contrôle que la version du manifest chargé par Chrome concorde avec `build-info.json` et que les quatre icônes se chargent.
+
 ## Décisions actées
 
 **Distribution : usage personnel, extension non empaquetée, pas de Chrome Web Store.** Ce choix relâche trois contraintes majeures de l'architecture initiale :

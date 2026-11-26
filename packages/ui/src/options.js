@@ -7,6 +7,7 @@ async function load() {
     const state = await chrome.runtime.sendMessage({ type: 'getState', payload: {} });
     settings = state.settings;
 
+    const info = await BuildInfo.load();
     const manifest = chrome.runtime.getManifest();
     const rulesets = manifest.declarative_net_request?.rule_resources ?? [];
     const forcedOff = new Set(settings.disabledRulesets);
@@ -32,7 +33,13 @@ async function load() {
             }
             await save('Liste mise à jour.');
         });
-        label.append(box, document.createTextNode(ruleset.id));
+        // The title and size come from the build; the id alone ("ads-fr")
+        // tells the reader little.
+        const described = info.rulesets?.[ruleset.id];
+        const count = document.createElement('span');
+        count.className = 'count';
+        count.textContent = described ? `${described.rules.toLocaleString('fr-FR')} règles` : '';
+        label.append(box, document.createTextNode(described?.title ?? ruleset.id), count);
         $('rulesets').append(label);
     }
 
@@ -113,3 +120,54 @@ $('save').addEventListener('click', async () => {
 });
 
 void load();
+
+/**
+ * The "Version" section: what is running, how old it is, and whether GitHub
+ * has something newer.
+ */
+async function renderAbout() {
+    const info = await BuildInfo.load();
+
+    $('about-version').textContent = info.version ?? '—';
+    $('about-built').textContent = BuildInfo.formatDate(info.builtAt);
+    $('about-commit').textContent = info.commit
+        ? `${info.commit}${info.dirty ? ' + modifications locales' : ''}`
+        : 'inconnu';
+    $('about-rules').textContent = typeof info.rules === 'number'
+        ? info.rules.toLocaleString('fr-FR') : '—';
+
+    const listAge = BuildInfo.daysSince(info.listsFetchedAt);
+    const lists = $('about-lists');
+    lists.textContent = BuildInfo.formatDate(info.listsFetchedAt)
+        + (listAge === null ? '' : listAge === 0 ? ' (aujourd\'hui)'
+            : ` (il y a ${listAge} jour${listAge > 1 ? 's' : ''})`);
+    lists.className = BuildInfo.listsAreStale(info) ? 'warn' : '';
+
+    const status = $('about-update');
+    const howto = [];
+    const result = await BuildInfo.checkForUpdate(info);
+    if (result.state === 'current') {
+        status.textContent = 'À jour — c\'est la dernière version publiée.';
+        status.className = 'ok';
+    } else if (result.state === 'behind') {
+        status.textContent = `Mise à jour disponible — ${result.behind} modification`
+            + `${result.behind > 1 ? 's' : ''} de retard sur GitHub.`;
+        status.className = 'warn';
+        howto.push('Pour mettre à jour : <code>git pull</code> puis <code>pnpm build</code> '
+            + 'dans le dossier du projet, puis « Recharger » sur la page des extensions.');
+    } else if (result.state === 'local') {
+        status.textContent = 'Version locale — construite depuis un code qui n\'est pas sur GitHub.';
+        status.className = '';
+    } else {
+        status.textContent = 'Vérification impossible (GitHub injoignable).';
+        status.className = '';
+    }
+
+    if (BuildInfo.listsAreStale(info)) {
+        howto.push('Les listes ont plus de ' + BuildInfo.STALE_LISTS_DAYS + ' jours : '
+            + '<code>pnpm update-filters</code> les rafraîchit sans toucher au code.');
+    }
+    $('about-howto').innerHTML = howto.join('<br>');
+}
+
+void renderAbout();

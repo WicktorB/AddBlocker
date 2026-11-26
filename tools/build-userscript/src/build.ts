@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { build as esbuild } from 'esbuild';
 
 import { USERSCRIPT_ENV, parseCosmeticList, preprocess } from '@addblocker/filter-parser';
+import { buildStamp } from '../../shared/version.js';
 import { compileCosmetic, type DomainPayload } from '@addblocker/cosmetic-compiler';
 import { HIDE_DECLARATION, SELECTORS_PER_RULE } from '@addblocker/cosmetic-runtime/css';
 import {
@@ -38,19 +39,14 @@ const COSMETIC_RUNTIME = join(ROOT, 'packages', 'cosmetic-runtime', 'src', 'appl
 const SCRIPTLET_RUNTIME = join(ROOT, 'packages', 'scriptlet-runtime', 'src', 'run.ts');
 
 /**
- * Derived from the build time, as `YYYY.MMDD.HHmm`.
+ * The build stamp — see tools/shared/version.ts for why the version is a date.
  *
- * A userscript manager only fetches `@updateURL` when the version there is
- * higher than the installed one. With a constant version every installed copy
- * would have kept its first set of lists for ever, however often this file was
- * regenerated — and the lists are the whole point of regenerating it.
+ * It matters most here: a userscript manager only fetches `@updateURL` when
+ * the version there is higher than the installed one. With a constant version
+ * every installed copy would have kept its first set of lists for ever.
  */
-function buildVersion(now: Date): string {
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    return `${now.getUTCFullYear()}.${now.getUTCMonth() + 1}${pad(now.getUTCDate())}.`
-        + `${now.getUTCHours()}${pad(now.getUTCMinutes())}`;
-}
-const VERSION = buildVersion(new Date());
+const STAMP = buildStamp(ROOT, new Date(), ['userscript']);
+const VERSION = STAMP.version;
 // Points at main, not at a feature branch: this URL is baked into every
 // installed copy as @updateURL, and a branch deleted after merging would make
 // updates stop without a word — the worst way to fail, since the user would go
@@ -181,6 +177,9 @@ function header(title: string, description: string, file: string): string {
  * (Safari iOS).
  *
  * Engendré depuis EasyList, Liste FR, EasyPrivacy et uAssets.
+ *
+ * Version ${VERSION} — construit le ${STAMP.builtAt.slice(0, 16).replace('T', ' à ')} UTC${STAMP.commit === '' ? '' : `, commit ${STAMP.commit}`}.
+ * La version est la date du build : plus elle est récente, plus les listes le sont.
  */
 `;
 }
