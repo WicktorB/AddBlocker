@@ -9,7 +9,7 @@
 import { createServer, type Server } from 'node:http';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -17,6 +17,8 @@ import { preinstalledChromium } from '../../shared/chromium.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const BUILT = join(ROOT, 'dist', 'extension');
+/** Chrome's static rule pool: the 30 000 guaranteed plus the 300 000 shared. */
+const STATIC_RULE_POOL = 330_000;
 const STAGED = join(ROOT, 'dist', 'verify-extension');
 
 /**
@@ -221,6 +223,58 @@ async function main(): Promise<void> {
         console.log(`  ${allEnabled ? 'PASS' : 'FAIL'}  every default ruleset accepted`);
         if (!allEnabled) failed = true;
         console.log(`  static rules still available: ${state.available}`);
+
+        // Chrome accepts a ruleset and still drops individual rules from it: a
+        // regex over its memory budget, a field it cannot parse. It says so
+        // only on the extensions page, as warnings nobody reads in CI — which
+        // is how 76 rules shipped dead until a user opened that page. Two
+        // checks stand in for reading it.
+        console.log('\nRules Chrome actually loaded');
+        const shipped: Array<{ ruleset: string; id: number; regex?: string; caseSensitive: boolean }> = [];
+        const enabledSet = new Set(state.enabled);
+        for (const file of await readdir(join(BUILT, 'rules'))) {
+            const ruleset = file.replace(/\.json$/, '');
+            if (!enabledSet.has(ruleset)) continue;
+            const rules = JSON.parse(await readFile(join(BUILT, 'rules', file), 'utf8')) as Array<{
+                id: number; condition: { regexFilter?: string; isUrlFilterCaseSensitive?: boolean };
+            }>;
+            for (const rule of rules) {
+                shipped.push({
+                    ruleset, id: rule.id, regex: rule.condition.regexFilter,
+                    caseSensitive: rule.condition.isUrlFilterCaseSensitive === true,
+                });
+            }
+        }
+
+        // 1. Every regex, put to the browser's own judgement.
+        const regexRules = shipped.filter((rule) => rule.regex !== undefined);
+        const verdicts = await page.evaluate(async (rules) => {
+            const dnr = (globalThis as unknown as { chrome: typeof chrome }).chrome.declarativeNetRequest;
+            const out: Array<{ supported: boolean; reason: string }> = [];
+            for (const rule of rules) {
+                const result = await dnr.isRegexSupported({ regex: rule.regex, isCaseSensitive: rule.caseSensitive });
+                out.push({ supported: result.isSupported, reason: result.reason ?? '' });
+            }
+            return out;
+        }, regexRules.map((rule) => ({ regex: rule.regex ?? '', caseSensitive: rule.caseSensitive })));
+        const refused = regexRules.filter((_, index) => !verdicts[index].supported);
+        console.log(`  ${refused.length === 0 ? 'PASS' : 'FAIL'}  ${regexRules.length} regex rules, `
+            + `${refused.length} refused by Chrome`);
+        for (const rule of refused.slice(0, 5)) {
+            console.log(`        ${rule.ruleset} #${rule.id}: ${(rule.regex ?? '').slice(0, 90)}`);
+        }
+        if (refused.length > 0) {
+            failed = true;
+            console.log('        the regex cost estimate in dnr-compiler/validate.ts let these through; lower its limit');
+        }
+
+        // 2. The count. Rules Chrome skipped for any other reason do not use
+        // up quota, so the quota it reports as used must equal what we shipped.
+        const loaded = STATIC_RULE_POOL - state.available;
+        const countsMatch = loaded === shipped.length;
+        console.log(`  ${countsMatch ? 'PASS' : 'FAIL'}  shipped ${shipped.length} rules, Chrome counts ${loaded}`
+            + `${countsMatch ? '' : ` — ${shipped.length - loaded} skipped; see the extension's Errors page`}`);
+        if (!countsMatch) failed = true;
 
         await page.close();
 

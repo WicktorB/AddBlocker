@@ -141,7 +141,11 @@ export function conditionFor(filter: NetworkFilter): { condition: DnrCondition; 
     if (o.domains.length > 0) condition.initiatorDomains = take(o.domains);
     if (o.excludedDomains.length > 0) condition.excludedInitiatorDomains = take(o.excludedDomains);
     if (o.denyAllow.length > 0) condition.excludedRequestDomains = take(o.denyAllow);
-    if (o.methods.length > 0) condition.requestMethods = [...new Set(o.methods)].sort();
+    // Lower-case: Chrome's parser takes "get", refuses "GET", and skips the
+    // rule — sixteen of them, until a browser's error page pointed it out.
+    const lower = (methods: string[]): string[] => [...new Set(methods.map((m) => m.toLowerCase()))].sort();
+    if (o.methods.length > 0) condition.requestMethods = lower(o.methods);
+    if (o.excludedMethods.length > 0) condition.excludedRequestMethods = lower(o.excludedMethods);
     if (o.matchCase) condition.isUrlFilterCaseSensitive = true;
 
     // `$to=` narrows the request domain; it cannot coexist with an anchored

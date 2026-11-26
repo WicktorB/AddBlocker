@@ -24,6 +24,7 @@ export interface DnrCondition {
     excludedResourceTypes?: string[];
     domainType?: 'firstParty' | 'thirdParty';
     requestMethods?: string[];
+    excludedRequestMethods?: string[];
     isUrlFilterCaseSensitive?: boolean;
 }
 

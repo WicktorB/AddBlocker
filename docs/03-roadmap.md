@@ -353,6 +353,18 @@ Chacune faisait passer un comportement correct pour un écart :
 - **Chemin de Chromium.** Les outils nommaient un build précis de Playwright (`chromium-1194`) ; ils cherchent maintenant le plus récent installé (`tools/shared/chromium.ts`).
 - **Contenu tardif testé.** `cosmetic-check` insère un élément 11 s après le chargement et vérifie que le moteur procédural le masque.
 
+## Phase 9 — Les règles que Chrome ignorait en silence ✅
+
+Premier chargement sur une vraie machine, et la page d'erreurs de l'extension affichait des dizaines d'avertissements. Chrome accepte un ruleset et en écarte quand même des règles une à une ; il ne le dit que là. **76 règles étaient livrées mortes**, et aucun contrôle ne le voyait.
+
+- **Regex au-delà du budget mémoire (60 règles).** Chrome compile chaque `regexFilter` dans 2 ko. Ce qui coûte n'est pas la longueur mais la répétition : RE2 n'a pas de compteur, `[a-f0-9]{32}` est la classe écrite trente-deux fois. Le build estime maintenant ce coût et écarte les regex trop chères (`regex:memory-limit`). L'estimation est calibrée sur les verdicts de Chromium pour les 226 regex des listes ; sa marge coûte onze regex que Chrome aurait acceptées.
+- **Méthodes HTTP en majuscules (16 règles).** Chrome veut `"get"`, refusait `"GET"`. Au passage, `$method=~get` perdait sa négation et devenait « toutes les méthodes » ; c'est maintenant `excludedRequestMethods`.
+- **Regex suivie d'options contenant une regex.** `/re/$script,header=etag:/^W\//` était coupé au dernier `/`, et les options partaient dans le motif.
+
+### Le contrôle qui manquait
+
+`pnpm verify` pose maintenant deux questions à Chromium : chaque regex livrée est-elle supportée (`isRegexSupported`), et le quota consommé correspond-il au nombre de règles livrées ? La seconde attrape toute règle ignorée, quelle qu'en soit la raison. Lancé sur l'ancien build, il échoue : 60 regex refusées, 71 règles manquantes au compte.
+
 ## Décisions actées
 
 **Distribution : usage personnel, extension non empaquetée, pas de Chrome Web Store.** Ce choix relâche trois contraintes majeures de l'architecture initiale :

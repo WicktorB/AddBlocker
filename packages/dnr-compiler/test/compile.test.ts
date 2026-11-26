@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseNetworkFilter } from '@addblocker/filter-parser';
 import { BAND, compile, expandWildcardDomains, validateRule, validateRuleset } from '../src/index.js';
+import { REGEX_COST_LIMIT, estimateRegexCost } from '../src/validate.js';
 
 const rulesFor = (...lines: string[]) => {
     const filters = lines.map((line) => {
@@ -247,5 +248,58 @@ describe('filters with options and no pattern', () => {
 
     it('keeps a popup filter that names its destination', () => {
         expect(ruleFor('||spam.example^$popup,domain=a.com').condition.resourceTypes).toContain('main_frame');
+    });
+});
+
+describe('request methods', () => {
+    it('emits them lower-case, the only spelling Chrome accepts', () => {
+        expect(ruleFor('||x.com^$method=GET|post').condition.requestMethods).toEqual(['get', 'post']);
+    });
+
+    it('turns negated methods into exclusions', () => {
+        const { condition } = ruleFor('||x.com^$method=~get');
+        expect(condition.requestMethods).toBeUndefined();
+        expect(condition.excludedRequestMethods).toEqual(['get']);
+    });
+
+    it('refuses a method DNR does not know', () => {
+        const { rules, stats } = rulesFor('||x.com^$method=trace');
+        expect(rules).toHaveLength(0);
+        expect(stats.unconvertibleReasons['method:unknown']).toBe(1);
+    });
+
+    it('flags an upper-case method in a finished rule', () => {
+        const rule = ruleFor('||x.com^$method=get');
+        rule.condition.requestMethods = ['GET'];
+        expect(validateRule(rule).join(' ')).toContain('requestMethods');
+    });
+});
+
+describe('regex memory budget', () => {
+    // Verdicts are Chromium's own (isRegexSupported), not guesses.
+    const refused = [
+        String.raw`^https?:\/\/[a-f0-9]{32}\.[a-z]{7}\.sbs\b`,
+        String.raw`^https:\/\/www\.vogue\.com\/[-\w]{120,}$`,
+        String.raw`\/[a-z0-9]{12}\/[a-zA-Z0-9\/\+\-]{97,106}$`,
+        String.raw`^https:\/\/cdn\.jsdelivr\.net\/npm\/[-a-z_]{4,22}@latest\/dist\/script\.min\.js$`,
+    ];
+    const accepted = [
+        String.raw`^https?:\/\/[a-z]{8,15}\.top\/`,
+        String.raw`\/ads\/banner\d+\.gif`,
+    ];
+
+    it.each(refused)('prices out a regex Chromium refuses: %s', (regex) => {
+        expect(estimateRegexCost(regex)).toBeGreaterThanOrEqual(REGEX_COST_LIMIT);
+        expect(rulesFor(`/${regex}/`).stats.unconvertibleReasons['regex:memory-limit']).toBe(1);
+    });
+
+    it.each(accepted)('keeps a regex Chromium accepts: %s', (regex) => {
+        expect(estimateRegexCost(regex)).toBeLessThan(REGEX_COST_LIMIT);
+        expect(rulesFor(`/${regex}/`).rules).toHaveLength(1);
+    });
+
+    it('prices repetition, not length', () => {
+        expect(estimateRegexCost('a'.repeat(100))).toBe(100);
+        expect(estimateRegexCost('[a-f0-9]{32}')).toBeGreaterThan(estimateRegexCost('[a-f0-9]+') * 30);
     });
 });
