@@ -121,7 +121,7 @@ Le critère initial parlait de « 20 sites de référence ». Le proxy de l'envi
 
 ### Couverture du catalogue
 
-22 scriptlets suffisent à couvrir 99,5 % des invocations — la distribution est très concentrée :
+22 scriptlets suffisent à couvrir 99,5 % des invocations — la distribution est très concentrée (mais ce taux ne dit pas *lesquelles* : voir la phase 11) :
 
 | Scriptlet | Invocations |
 |---|---|
@@ -372,6 +372,55 @@ Premier chargement sur une vraie machine, et la page d'erreurs de l'extension af
 - **`build-info.json`** : version, date, commit, date des listes, règles par liste. Le popup affiche version et date ; les réglages ajoutent l'état *à jour / mise à jour disponible*, par comparaison du commit avec `main` sur GitHub — une requête, uniquement à l'ouverture de cette page.
 - Les réglages affichent le titre des listes et leur nombre de règles au lieu de leur identifiant.
 - `verify` contrôle que la version du manifest chargé par Chrome concorde avec `build-info.json` et que les quatre icônes se chargent.
+
+## Phase 11 — YouTube, et ce que « 99,5 % » cachait ✅
+
+Des publicités sur YouTube, sur ordinateur comme sur téléphone, avec un build qui annonçait 99,5 % du catalogue de scriptlets couvert. Les deux étaient vrais. Le taux compte les invocations ; les filtres YouTube en représentent quelques dizaines sur 63 000, et **aucun de ceux qui retirent réellement les publicités n'était livré**. YouTube sert ses publicités depuis les hôtes de ses vidéos : aucune règle réseau ne les sépare, tout repose sur des scriptlets qui éditent les échanges du lecteur avec sa propre API.
+
+### Ce qui manquait
+
+| Scriptlet | Rôle sur YouTube |
+|---|---|
+| `json-prune-fetch-response`, `json-prune-xhr-response` | retirent `adPlacements` / `adSlots` des réponses de `/youtubei/v1/player` |
+| `trusted-replace-fetch-response` (`trusted-rpfr`), `trusted-replace-xhr-response` | le même travail sur le texte brut, pour les réponses que l'élagage structurel ne voit pas |
+| `trusted-edit-inbound-object` | réécrit la requête du lecteur au moment où elle est sérialisée |
+| `trusted-replace-node-text` (`rpnt`) | réécrit le script d'amorçage avant son exécution |
+| `trusted-prevent-dom-bypass` | empêche la page de récupérer un `fetch` intact dans une iframe vide |
+| `json-edit-fetch-response` | retire les emplacements sponsorisés du fil, sur mobile |
+
+S'y ajoutent `json-edit`, `json-edit-xhr-response`, leurs variantes `trusted-`, `edit-inbound-object` et `trusted-set-constant`, qui reposent sur les mêmes briques. Restent hors catalogue 198 invocations sur 26 scriptlets (`noeval`, `trusted-replace-argument`, `cookie-remover`…), aucune sur YouTube.
+
+### Ce qui était là, et faux
+
+- **Le découpage des arguments retirait tous les antislashs.** `/\/player(?:\?.+)?$/` devenait `//player(?:?.+)?$/`, qui n'est plus une regex valide : le filtre ne s'appliquait à rien. Il coupait aussi à l'intérieur d'un argument entre guillemets (`'window,"fetch"'`). Il suit maintenant la règle d'uBO — une virgule sépare sauf si elle est échappée ou si l'argument est entre guillemets, et seul l'antislash d'échappement est retiré — vérifiée à l'identique contre le découpeur d'uBO sur les 7 140 filtres des listes.
+- **`json-prune` ignorait `[-]`, `[]`, `{}`, `*` et les chemins-conditions.** `entries.[-].command…isAd` (publicités dans les Shorts) était sans effet.
+- **`rmnt` supprimait le nœud** au lieu de vider son texte, et attendait un sélecteur CSS là où les listes donnent un nom de nœud.
+- **`set-constant` acceptait n'importe quelle chaîne** comme valeur ; uBO n'accepte qu'un vocabulaire fermé, et laisse la propriété à la page quand celle-ci y tient déjà une valeur d'un autre type.
+- **Les exceptions `#@#+js(nom, args)` désactivaient tout le scriptlet** sur le domaine ; elles annulent maintenant l'invocation exacte, valent pour les sous-domaines, et `~sous.domaine` sur un filtre est enfin honoré.
+- **Les scriptlets `trusted-` étaient acceptés de toute liste.** Ils injectent du texte dans la page ; comme chez uBO, seules les listes uAssets y ont droit.
+
+Le moteur de chemins JSON (`[?.a][?.b*="x"].c+={…}`, `=repl(…)`) suit le dialecte d'uBO ; il a été comparé au sien sur 32 000 applications tirées au hasard, sans écart.
+
+### Deux mondes
+
+`rmnt` et `rpnt` ne touchent que le DOM. Ils tournent désormais dans le monde isolé de l'extension, comme chez uBO, dans des buckets à part (`scriptlets-isolated-NNN`) : la page ne peut ni voir ni gêner l'observateur, et la politique Trusted Types de YouTube — qui refuse qu'on affecte une chaîne au texte d'un script — ne s'y applique pas. Dans le userscript, qui n'a qu'un monde, la réécriture passe par une politique Trusted Types créée pour l'occasion.
+
+### La page d'erreurs de l'extension
+
+Envelopper `fetch` place les cadres de l'extension sous chaque requête de la page, et Chrome attribue une erreur non rattrapée au script où elle surgit. Mesuré dans Chromium :
+
+- une requête que la page ne surveille pas et qui échoue — un traceur bloqué par nos propres règles, typiquement — produisait une entrée « Uncaught (in promise) TypeError: Failed to fetch » **sur la page d'erreurs de l'extension** ;
+- chaque script interrompu par `aopr`, `acs` ou `aost` en produisait une aussi, et cela depuis la phase 3.
+
+Deux corrections. La copie du runtime injectée dans le monde de la page (`runtime-page.js`) porte un `sourceURL` : les erreurs de la page restent dans sa console, inchangées, et ne sont plus rangées chez nous. Au passage, l'identifiant de l'extension disparaît des traces de pile que la page peut lire. Et les erreurs lancées exprès pour interrompre un script portent une marque, reconnue par un écouteur posé à `document_start` qui les annule. La copie du monde isolé garde son URL réelle : une erreur là est la nôtre et doit le dire.
+
+### Le contrôle qui manquait
+
+`pnpm youtube-check` sert des pages construites comme les vraies — mêmes hôtes (en HTTPS : `youtube.com` est dans la liste HSTS préchargée), mêmes points d'API, mêmes champs, même en-tête Trusted Types — et vérifie ce qui compte : la page se retrouve-t-elle avec les publicités en main ? Réponse initiale, API du lecteur par `fetch` et par `XMLHttpRequest`, Shorts, fil mobile, puis les mêmes pages avec le userscript seul. Il lit ensuite la page d'erreurs de l'extension par `chrome.developerPrivate` et exige qu'elle soit vide, alors que la page a laissé exprès une requête échouer et un script se faire interrompre.
+
+### Limite assumée
+
+**Rien de tout cela n'a été essayé sur le vrai YouTube** : l'environnement de build n'y a pas accès. La simulation prouve que les filtres des listes produisent l'effet pour lequel ils sont écrits, pas que YouTube n'a pas changé de méthode depuis. Les listes bougent souvent sur ce site ; `pnpm update-filters` est le premier geste quand des publicités reviennent, et le build nomme tout scriptlet nouveau qu'il ne connaît pas.
 
 ## Décisions actées
 

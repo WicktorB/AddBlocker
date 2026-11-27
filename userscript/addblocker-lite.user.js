@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AddBlocker Léger (générique)
 // @namespace    https://github.com/WicktorB/AddBlocker
-// @version      2026.1126.1338
+// @version      2026.1126.2102
 // @description  Masquage générique seulement — plus petit, sans règles par site.
 // @author       AddBlocker
 // @match        *://*/*
@@ -23,7 +23,7 @@
  *
  * Engendré depuis EasyList, Liste FR, EasyPrivacy et uAssets.
  *
- * Version 2026.1126.1338 — construit le 2026-11-26 à 13:38 UTC, commit ccd5432ca7.
+ * Version 2026.1126.2102 — construit le 2026-11-26 à 21:02 UTC, commit 5824b817e8.
  * La version est la date du build : plus elle est récente, plus les listes le sont.
  */
 (function () {

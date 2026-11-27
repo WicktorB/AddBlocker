@@ -103,9 +103,55 @@ export function definePath(
     step(root, 0);
 }
 
+/**
+ * Set while the scriptlets of a page are being installed.
+ *
+ * A trap must show its installer the real value and everyone else the forced
+ * one. When the scriptlets arrive as an inline `<script>`, that script is
+ * `document.currentScript` and can be told apart; injected by the browser as a
+ * content script there is no current script at all, and neither is there one
+ * inside a timer or an event handler of the page — so "no current script"
+ * cannot be taken to mean "us". This flag says it instead.
+ */
+export const installing = { active: false };
+
+let abortToken: string | undefined;
+
+/**
+ * Prepares for aborting scripts: picks the marker the thrown errors will
+ * carry, and starts recognising it.
+ *
+ * Aborting a script means throwing inside it, on purpose. Left alone, each of
+ * those throws surfaces as an uncaught error in the page's console, where a
+ * working filter then reads as a defect. An `error` event whose message
+ * carries the marker is ours, and is cancelled — which is all it takes for the
+ * browser not to report it. Every other error is left exactly as it was.
+ *
+ * The listener is attached when the scriptlet is installed, not when it first
+ * fires: at document_start nothing of the page has run, so it is first in line
+ * and the page holds no reference with which to remove it. (Assigning
+ * `window.onerror` would have been undone by the first site that assigns its
+ * own, which is most of them.)
+ */
+export function armAbort(): string {
+    if (abortToken !== undefined) return abortToken;
+    const token = String.fromCharCode(Date.now() % 26 + 97)
+        + Math.floor(Math.random() * 982451653 + 982451653).toString(36);
+    abortToken = token;
+    try {
+        EventTarget.prototype.addEventListener.call(self, 'error', (event: Event) => {
+            const { message, error } = event as ErrorEvent;
+            const ours = (typeof message === 'string' && message.includes(token))
+                || (error instanceof Error && error.message === token);
+            if (ours) event.preventDefault();
+        }, true);
+    } catch { /* no window to listen on */ }
+    return token;
+}
+
 /** Thrown to abort a script, mirroring uBO's approach. */
 export function abort(): never {
-    throw new ReferenceError(`${Math.random().toString(36).slice(2)}`);
+    throw new ReferenceError(armAbort());
 }
 
 /** Text of the script currently executing, for `abort-current-script`. */
